@@ -1,0 +1,24 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test data
+datasets/
+*.fq
+*.fq.gz
+*.fa
+*.fa.gz
+
+# Benchmark results
+bench_results/

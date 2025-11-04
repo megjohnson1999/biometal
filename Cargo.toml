@@ -1,0 +1,56 @@
+[package]
+name = "biometal"
+version = "0.1.0"
+edition = "2021"
+authors = ["Scott Handley <scott.handley@example.com>"]
+description = "ARM-native bioinformatics library with streaming architecture and evidence-based optimization"
+documentation = "https://docs.rs/biometal"
+repository = "https://github.com/shandley/biometal"
+homepage = "https://github.com/shandley/biometal"
+license = "MIT OR Apache-2.0"
+keywords = ["bioinformatics", "genomics", "arm", "neon", "streaming"]
+categories = ["science", "parsing"]
+readme = "README.md"
+
+[dependencies]
+# Core I/O and compression
+flate2 = "1.0"          # Gzip/bgzip decompression
+memmap2 = "0.9"         # Memory-mapped I/O (Rule 4)
+
+# Parallel processing
+rayon = "1.8"           # Parallel bgzip (Rule 3)
+
+# Network streaming (Week 3-4)
+reqwest = { version = "0.11", features = ["stream", "blocking"], optional = true }
+lru = { version = "0.12", optional = true }
+
+# Python bindings (Week 5-6)
+pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+
+[dev-dependencies]
+criterion = "0.5"       # Benchmarking
+proptest = "1.4"        # Property-based testing
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+# ARM NEON is in std::arch, no external dependency needed
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"            # For madvise on macOS (Rule 4)
+
+[features]
+default = []
+network = ["reqwest", "lru"]  # Enable network streaming (Week 3-4)
+python = ["pyo3"]              # Enable Python bindings (Week 5-6)
+
+# Benchmarks will be added in Week 1-2 implementation
+# [[bench]]
+# name = "operations"
+# harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+
+[profile.bench]
+inherits = "release"
