@@ -563,6 +563,180 @@ pub struct StreamingReader {
 
 ---
 
+## Rule 7: Metal GPU + Unified Memory (Apple Silicon Only)
+
+### Overview
+
+⭐ **NEW**: Extension beyond original ASBB scope to validate Apple Silicon breakthrough opportunities
+
+Apple's unified memory architecture (UMA) enables zero-copy GPU acceleration impossible on traditional CUDA/x86 systems. This rule applies to compute-bound BAM operations with massive parallelism (1000s of genomic positions).
+
+### When to Apply
+
+Operations with **embarrassingly parallel** patterns across genomic positions:
+- **Pileup generation**: Accumulate 50-100 reads per position (10-50× expected)
+- **Coverage calculation**: Parallel position counting (20-100× expected)
+- **Depth computation**: Statistical accumulation across regions
+
+**Do NOT use Metal for**:
+- I/O-bound operations (parsing, file reading)
+- Operations already optimized with NEON (16-25× Rule 1)
+- String processing (CIGAR parsing - use NEON instead)
+
+### Why Apple Silicon is Different
+
+**Traditional GPU (CUDA)**:
+```
+CPU RAM ─[PCIe: 16 GB/s]→ GPU RAM
+         ↓ copy overhead ↓
+      50-80% of speedup lost to memory transfers
+```
+
+**Apple Silicon Unified Memory**:
+```
+CPU ←[400 GB/s]→ Shared RAM ←[400 GB/s]→ GPU
+     Zero-copy, 25× bandwidth advantage
+```
+
+### Evidence (To Be Validated)
+
+⚠️ **Status**: Planned experiments for Week 9-10 (Dec 30 - Jan 12, 2026)
+
+**Entry 034: NEON CIGAR Parsing** (Week 9)
+- **Experiments**: 30 (N=30 statistical rigor)
+- **Platforms**: Mac M4 Max (NEON) vs. x86_64 (scalar)
+- **Operation**: Parse 1M CIGAR strings (BAM alignment format)
+- **Expected speedup**: 10-20× (analogous to Rule 1 base counting 16.7×)
+- **Rationale**: CIGAR is string pattern matching, perfect for SIMD
+- **Status**: Not yet conducted
+
+**Entry 035: Metal GPU Pileup Generation** (Week 10)
+- **Experiments**: 30 (N=30 statistical rigor)
+- **Platforms**: Mac M4 Max (Metal) vs. CPU parallel (rayon)
+- **Dataset**: 50× coverage BAM file, chromosome 1 (millions of reads)
+- **Baseline**: SAMtools mpileup (single-threaded)
+- **Expected speedup**: 10-50× vs. SAMtools, 2-5× vs. CPU parallel
+- **Key advantage**: Zero-copy UMA (no PCIe bottleneck)
+- **Status**: Not yet conducted
+
+**Entry 036: Metal GPU Coverage Calculation** (Week 11+)
+- **Experiments**: 30 (N=30 statistical rigor)
+- **Operation**: Calculate per-position coverage across genome
+- **Expected speedup**: 20-100× (simpler than pileup, highly parallel)
+- **Status**: Planned for v1.2+
+
+### Implementation Pattern (Metal GPU)
+
+```rust
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+pub fn generate_pileup_metal(
+    bam_records: &[BamRecord],
+    region: GenomicRegion,
+) -> Result<Pileup> {
+    use metal::{Device, MTLResourceOptions};
+
+    let device = Device::system_default()
+        .ok_or(BiometalError::MetalNotAvailable)?;
+
+    // Zero-copy: Share CPU buffer with GPU (UMA advantage)
+    let shared_buffer = device.new_buffer_with_data(
+        bam_records.as_ptr() as *const _,
+        (bam_records.len() * std::mem::size_of::<BamRecord>()) as u64,
+        MTLResourceOptions::StorageModeShared, // KEY: Zero-copy!
+    );
+
+    // Metal compute shader processes 1000s of positions in parallel
+    let pileup = compute_pileup_gpu(device, shared_buffer, region)?;
+
+    Ok(pileup)
+}
+
+// Fallback for non-macOS ARM platforms (Graviton, RPi)
+#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+pub fn generate_pileup_metal(
+    bam_records: &[BamRecord],
+    region: GenomicRegion,
+) -> Result<Pileup> {
+    // Use NEON + rayon CPU parallel instead
+    generate_pileup_neon_parallel(bam_records, region)
+}
+```
+
+### Metal Compute Shader (src/metal/shaders.metal)
+
+```metal
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void pileup_accumulate(
+    constant BamRecord* records [[buffer(0)]],
+    device atomic_uint* pileup [[buffer(1)]],
+    constant uint& num_records [[buffer(2)]],
+    constant uint& start_position [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= num_records) return;
+
+    const BamRecord& record = records[gid];
+
+    // Each GPU thread processes one read
+    for (uint i = 0; i < record.length; i++) {
+        uint genome_pos = record.position + i - start_position;
+        atomic_fetch_add_explicit(&pileup[genome_pos], 1, memory_order_relaxed);
+    }
+}
+```
+
+### Decision Framework: Metal vs. NEON vs. rayon
+
+| Operation | Best Tool | Speedup | Rationale |
+|-----------|-----------|---------|-----------|
+| Pileup (Mac) | Metal GPU | 10-50× | Massive parallelism, zero-copy UMA |
+| Pileup (Linux ARM) | NEON + rayon | 5-10× | No Metal, but NEON still helps |
+| Coverage (Mac) | Metal GPU | 20-100× | Embarrassingly parallel |
+| CIGAR parsing | NEON | 10-20× | String SIMD pattern matching |
+| Base counting | NEON | 16.7× | Already proven (Rule 1) |
+| Quality filtering | NEON | 25.1× | Already proven (Rule 1) |
+| File decompression | rayon | 6.5× | I/O bound (Rule 3) |
+
+### Validation Plan
+
+**Week 9** (Dec 30 - Jan 5):
+1. Implement NEON CIGAR parsing
+2. Benchmark against scalar baseline (N=30)
+3. Calculate Cohen's d, 95% CI
+4. Document Entry 034
+
+**Week 10** (Jan 6-12):
+1. Implement Metal pileup generation
+2. Benchmark against SAMtools + CPU parallel (N=30)
+3. Validate zero-copy UMA advantage
+4. Calculate Cohen's d, 95% CI
+5. Document Entry 035
+
+**Week 11+** (v1.2):
+1. Extend to coverage calculation (Entry 036)
+2. Compare CUDA analogues (if available)
+3. Publish findings
+
+### Unique Contribution
+
+⭐ **World-first**: No published bioinformatics work using Metal GPU + UMA
+- Parabricks uses CUDA (PCIe bottleneck)
+- PaCBAM uses CPU parallel only
+- SAMtools is single-threaded
+- **biometal will be the first** to exploit Apple's true unified memory
+
+### Platform Support Tiers
+
+1. **Mac (Apple Silicon)**: Full Metal + NEON acceleration
+2. **Linux ARM** (Graviton, RPi): NEON + rayon fallback
+3. **x86_64**: Scalar + rayon fallback
+
+**Key insight**: Even without Metal, ARM still wins with NEON (Rule 1)
+
+---
+
 ## References
 
 **Full experimental documentation**:
@@ -584,7 +758,10 @@ pub struct StreamingReader {
 
 ---
 
-**Document Version**: 1.0  
-**Date**: November 4, 2025  
-**Status**: Evidence base complete, ready for implementation  
-**Next**: biometal library implementation (Nov 4 - Dec 15, 2025)
+**Document Version**: 1.1
+**Date**: November 4, 2025
+**Status**:
+- Rules 1-6: Evidence complete (1,357 experiments, 40,710 measurements)
+- Rule 7: Planned for Week 9-10 (+90 experiments → 1,447 total)
+**Current**: biometal v1.0 implementation (FASTQ/FASTA, Nov 4 - Dec 15)
+**Next**: biometal v1.1 with Metal GPU breakthrough (Dec 16 - Jan 12, 2026)

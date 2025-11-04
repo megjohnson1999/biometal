@@ -17,6 +17,9 @@ readme = "README.md"
 flate2 = "1.0"          # Gzip/bgzip decompression
 memmap2 = "0.9"         # Memory-mapped I/O (Rule 4)
 
+# Error handling
+thiserror = "1.0"       # Derive Error trait
+
 # Parallel processing
 rayon = "1.8"           # Parallel bgzip (Rule 3)
 

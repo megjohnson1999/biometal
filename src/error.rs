@@ -1,68 +1,63 @@
 //! Error types for biometal
 
-use std::fmt;
+use thiserror::Error;
 
 /// Result type alias for biometal operations
 pub type Result<T> = std::result::Result<T, BiometalError>;
 
 /// Error types that can occur in biometal
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum BiometalError {
     /// I/O error
-    Io(std::io::Error),
-    
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// Invalid FASTQ format
+    #[error("Invalid FASTQ format at line {line}: {msg}")]
     InvalidFastqFormat {
         /// Line number where error occurred
         line: usize,
         /// Error message
         msg: String,
     },
-    
+
     /// Invalid FASTA format
+    #[error("Invalid FASTA format at line {line}: {msg}")]
     InvalidFastaFormat {
         /// Line number where error occurred
         line: usize,
         /// Error message
         msg: String,
     },
-    
+
     /// Compression/decompression error
+    #[error("Compression error: {0}")]
     Compression(String),
-    
+
+    /// Paired-end read ID mismatch
+    #[error("Paired-end read ID mismatch: R1={r1_id}, R2={r2_id}")]
+    PairedEndMismatch {
+        /// R1 read ID
+        r1_id: String,
+        /// R2 read ID
+        r2_id: String,
+    },
+
+    /// Paired-end file length mismatch
+    #[error("Paired-end files have different lengths")]
+    PairedEndLengthMismatch,
+
+    /// Network streaming not yet implemented (stub for Week 3-4)
+    #[error("Network streaming not yet implemented (coming in Week 3-4)")]
+    NetworkNotYetImplemented,
+
     /// Network error (Week 3-4)
     #[cfg(feature = "network")]
+    #[error("Network error: {0}")]
     Network(String),
-}
 
-impl fmt::Display for BiometalError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BiometalError::Io(e) => write!(f, "I/O error: {}", e),
-            BiometalError::InvalidFastqFormat { line, msg } => {
-                write!(f, "Invalid FASTQ format at line {}: {}", line, msg)
-            }
-            BiometalError::InvalidFastaFormat { line, msg } => {
-                write!(f, "Invalid FASTA format at line {}: {}", line, msg)
-            }
-            BiometalError::Compression(msg) => write!(f, "Compression error: {}", msg),
-            #[cfg(feature = "network")]
-            BiometalError::Network(msg) => write!(f, "Network error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for BiometalError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            BiometalError::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for BiometalError {
-    fn from(error: std::io::Error) -> Self {
-        BiometalError::Io(error)
-    }
+    /// Metal GPU not available
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    #[error("Metal GPU not available on this system")]
+    MetalNotAvailable,
 }
