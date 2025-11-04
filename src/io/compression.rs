@@ -101,14 +101,13 @@ impl DataSource {
 
             #[cfg(feature = "network")]
             DataSource::Sra(accession) => {
+                use crate::io::network::HttpReader;
+                use crate::io::sra::sra_to_url;
+
                 // Convert SRA accession to HTTP URL
-                // SRA provides HTTP access via: https://sra-download.ncbi.nlm.nih.gov/traces/sra{N}/{accession}
-                // where N is derived from accession
-                // For now, return error - full SRA implementation in Week 4
-                Err(BiometalError::Network(format!(
-                    "SRA streaming not yet implemented for accession: {}. Coming in Week 4.",
-                    accession
-                )))
+                let url = sra_to_url(accession)?;
+                let reader = HttpReader::new(&url)?;
+                Ok(Box::new(std::io::BufReader::new(reader)))
             }
         }
     }

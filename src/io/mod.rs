@@ -18,3 +18,9 @@ pub use paired::PairedFastqStream;
 pub mod network;
 #[cfg(feature = "network")]
 pub use network::{HttpClient, HttpReader};
+
+// Week 3-4: SRA integration (Rule 6)
+#[cfg(feature = "network")]
+pub mod sra;
+#[cfg(feature = "network")]
+pub use sra::{is_sra_accession, sra_to_url};

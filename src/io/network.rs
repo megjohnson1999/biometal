@@ -50,6 +50,7 @@ use lru::LruCache;
 use reqwest::blocking::Client;
 use std::io::{self, Read};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 /// Default cache size for bgzip blocks (50 MB)
@@ -445,6 +446,45 @@ impl HttpClient {
             max_bytes: cache.max_bytes(),
         })
     }
+
+    /// Prefetch multiple ranges in background threads
+    ///
+    /// Spawns background threads to fetch multiple ranges ahead of time.
+    /// Fetched data is stored in the cache for future reads.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - URL to fetch from
+    /// * `ranges` - List of (start, end) byte ranges to prefetch
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use biometal::io::network::HttpClient;
+    /// # fn main() -> biometal::Result<()> {
+    /// let client = HttpClient::new()?;
+    ///
+    /// // Prefetch next 4 blocks (65 KB each)
+    /// let ranges: Vec<(u64, u64)> = (0..4)
+    ///     .map(|i| (i * 65536, (i + 1) * 65536))
+    ///     .collect();
+    ///
+    /// client.prefetch("https://example.com/file.gz", &ranges);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn prefetch(&self, url: &str, ranges: &[(u64, u64)]) {
+        for &(start, end) in ranges {
+            let client = self.clone();
+            let url = url.to_string();
+
+            // Spawn background thread for each range
+            thread::spawn(move || {
+                // Ignore errors in background threads (they'll be cache misses)
+                let _ = client.fetch_range(&url, start, end);
+            });
+        }
+    }
 }
 
 impl Default for HttpClient {
@@ -468,12 +508,19 @@ pub struct CacheStats {
 ///
 /// This implements `Read` trait, allowing it to be used anywhere
 /// a file reader would be used.
+///
+/// # Background Prefetching
+///
+/// HttpReader automatically prefetches upcoming blocks in background threads
+/// to hide network latency. The number of blocks to prefetch ahead is
+/// configurable (default: 4 blocks as per DEFAULT_PREFETCH_COUNT).
 pub struct HttpReader {
     client: HttpClient,
     url: String,
     position: u64,
     total_size: Option<u64>,
     chunk_size: usize,
+    prefetch_count: usize,
 }
 
 impl HttpReader {
@@ -512,6 +559,7 @@ impl HttpReader {
             position: 0,
             total_size,
             chunk_size: 65 * 1024, // Default: 65 KB (typical bgzip block size)
+            prefetch_count: DEFAULT_PREFETCH_COUNT,
         })
     }
 
@@ -521,6 +569,33 @@ impl HttpReader {
     /// Default is 65 KB (typical bgzip block size).
     pub fn with_chunk_size(mut self, size: usize) -> Self {
         self.chunk_size = size;
+        self
+    }
+
+    /// Set number of blocks to prefetch ahead
+    ///
+    /// Background prefetching hides network latency by fetching blocks
+    /// ahead of time. Default is 4 blocks (DEFAULT_PREFETCH_COUNT).
+    ///
+    /// Set to 0 to disable prefetching.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of blocks to prefetch (0 = disabled)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use biometal::io::network::HttpReader;
+    /// # fn main() -> biometal::Result<()> {
+    /// // Prefetch 8 blocks ahead (aggressive)
+    /// let reader = HttpReader::new("https://example.com/file.gz")?
+    ///     .with_prefetch_count(8);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_prefetch_count(mut self, count: usize) -> Self {
+        self.prefetch_count = count;
         self
     }
 }
@@ -569,7 +644,43 @@ impl Read for HttpReader {
         buf[..n].copy_from_slice(&data[..n]);
 
         self.position += n as u64;
+
+        // Trigger background prefetching for upcoming blocks
+        if self.prefetch_count > 0 {
+            self.trigger_prefetch();
+        }
+
         Ok(n)
+    }
+}
+
+impl HttpReader {
+    /// Trigger background prefetching of upcoming blocks
+    ///
+    /// Spawns background threads to prefetch the next N blocks starting
+    /// from the current position. Respects EOF boundaries if total_size is known.
+    fn trigger_prefetch(&self) {
+        let mut ranges = Vec::with_capacity(self.prefetch_count);
+        let mut prefetch_position = self.position;
+
+        for _ in 0..self.prefetch_count {
+            let start = prefetch_position;
+            let end = start + self.chunk_size as u64;
+
+            // Check if we're past EOF
+            if let Some(total) = self.total_size {
+                if start >= total {
+                    break; // Don't prefetch past EOF
+                }
+            }
+
+            ranges.push((start, end));
+            prefetch_position = end;
+        }
+
+        if !ranges.is_empty() {
+            self.client.prefetch(&self.url, &ranges);
+        }
     }
 }
 
