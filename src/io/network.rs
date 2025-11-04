@@ -49,7 +49,6 @@ use bytes::Bytes;
 use lru::LruCache;
 use reqwest::blocking::Client;
 use std::io::{self, Read};
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -91,7 +90,7 @@ pub const DEFAULT_PREFETCH_COUNT: usize = 4;
 #[derive(Clone)]
 pub struct HttpClient {
     client: Client,
-    cache: Arc<Mutex<LruCache<CacheKey, Bytes>>>,
+    cache: Arc<Mutex<ByteBoundedCache>>,
     max_retries: u32,
     timeout: Duration,
 }
@@ -104,6 +103,85 @@ struct CacheKey {
     url: String,
     start: u64,
     end: u64,
+}
+
+/// Byte-bounded cache that enforces size limits based on actual data size
+///
+/// Wraps LruCache to provide strict memory bounds based on bytes rather than
+/// entry count. This ensures compliance with Rule 5 (constant memory guarantees).
+///
+/// # Memory Safety
+///
+/// - Tracks actual bytes used, not just entry count
+/// - Evicts LRU entries when size limit would be exceeded
+/// - Prevents cache from exceeding max_size regardless of entry sizes
+struct ByteBoundedCache {
+    cache: LruCache<CacheKey, Bytes>,
+    current_size: usize,
+    max_size: usize,
+}
+
+impl ByteBoundedCache {
+    /// Create a new byte-bounded cache with the given maximum size in bytes
+    fn new(max_size: usize) -> Self {
+        Self {
+            cache: LruCache::unbounded(),
+            current_size: 0,
+            max_size,
+        }
+    }
+
+    /// Get a value from the cache (marks as recently used)
+    fn get(&mut self, key: &CacheKey) -> Option<&Bytes> {
+        self.cache.get(key)
+    }
+
+    /// Insert a value into the cache, evicting LRU entries if needed
+    fn put(&mut self, key: CacheKey, value: Bytes) {
+        let value_size = value.len();
+
+        // If this single value is larger than max_size, don't cache it
+        if value_size > self.max_size {
+            return;
+        }
+
+        // If key already exists, we'll replace it - subtract old size first
+        if let Some(old) = self.cache.peek(&key) {
+            self.current_size = self.current_size.saturating_sub(old.len());
+        }
+
+        // Evict LRU entries until we have space for the new value
+        while self.current_size + value_size > self.max_size && !self.cache.is_empty() {
+            if let Some((_, evicted)) = self.cache.pop_lru() {
+                self.current_size = self.current_size.saturating_sub(evicted.len());
+            }
+        }
+
+        // Insert the new value
+        self.current_size += value_size;
+        self.cache.push(key, value);
+    }
+
+    /// Clear all entries from the cache
+    fn clear(&mut self) {
+        self.cache.clear();
+        self.current_size = 0;
+    }
+
+    /// Get the number of entries in the cache
+    fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Get the current size of cached data in bytes
+    fn current_bytes(&self) -> usize {
+        self.current_size
+    }
+
+    /// Get the maximum size of the cache in bytes
+    fn max_bytes(&self) -> usize {
+        self.max_size
+    }
 }
 
 impl HttpClient {
@@ -137,12 +215,8 @@ impl HttpClient {
             .build()
             .map_err(|e| BiometalError::Network(e.to_string()))?;
 
-        // LRU cache: capacity is number of entries (we'll use byte-based limit separately)
-        // For simplicity, estimate ~65KB per bgzip block
-        let num_entries = cache_size_bytes / (65 * 1024);
-        let cache = Arc::new(Mutex::new(LruCache::new(
-            NonZeroUsize::new(num_entries.max(1)).unwrap(),
-        )));
+        // Create byte-bounded cache with strict size limit (Rule 5)
+        let cache = Arc::new(Mutex::new(ByteBoundedCache::new(cache_size_bytes)));
 
         Ok(Self {
             client,
@@ -184,7 +258,10 @@ impl HttpClient {
 
         // Check cache first
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|e| BiometalError::Cache(format!("Cache lock poisoned: {}", e)))?;
             if let Some(data) = cache.get(&key) {
                 return Ok(data.clone());
             }
@@ -195,7 +272,10 @@ impl HttpClient {
 
         // Store in cache
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|e| BiometalError::Cache(format!("Cache lock poisoned: {}", e)))?;
             cache.put(key, data.clone());
         }
 
@@ -245,34 +325,125 @@ impl HttpClient {
             })?;
 
         let status = response.status();
-        if !status.is_success() && status.as_u16() != 206 {
-            // 206 Partial Content is success for range requests
-            return Err(BiometalError::Http {
-                status: status.as_u16(),
-                url: url.to_string(),
-            });
+
+        // Check for proper status codes
+        match status.as_u16() {
+            206 => {
+                // 206 Partial Content - server supports range requests (expected)
+            }
+            200 => {
+                // 200 OK - server ignored range header and returned entire file
+                // This violates our memory bounds and is not acceptable
+                return Err(BiometalError::Network(format!(
+                    "Server does not support range requests (returned 200 instead of 206): {}. \
+                     This would violate memory bounds. Server must support HTTP range requests.",
+                    url
+                )));
+            }
+            416 => {
+                // 416 Range Not Satisfiable - requested range is out of bounds
+                return Err(BiometalError::Network(format!(
+                    "Requested range {}-{} is out of bounds for URL: {}",
+                    start,
+                    end - 1,
+                    url
+                )));
+            }
+            _ if !status.is_success() => {
+                return Err(BiometalError::Http {
+                    status: status.as_u16(),
+                    url: url.to_string(),
+                });
+            }
+            _ => {
+                // Other success codes are unexpected but we'll allow them
+            }
         }
 
         let bytes = response
             .bytes()
             .map_err(|e| BiometalError::Network(e.to_string()))?;
 
+        // Validate response size matches request (for 206 responses)
+        if status.as_u16() == 206 {
+            let expected_size = (end - start) as usize;
+            let actual_size = bytes.len();
+
+            // Allow responses to be smaller (end of file) but not larger
+            if actual_size > expected_size {
+                return Err(BiometalError::Network(format!(
+                    "Server returned more data than requested: expected {} bytes, got {} bytes",
+                    expected_size, actual_size
+                )));
+            }
+        }
+
         Ok(bytes)
     }
 
+    /// Get the content length of a URL via HEAD request
+    ///
+    /// Returns None if the server doesn't provide Content-Length header.
+    fn get_content_length(&self, url: &str) -> Result<Option<u64>> {
+        let response = self
+            .client
+            .head(url)
+            .send()
+            .map_err(|e| {
+                if e.is_timeout() {
+                    BiometalError::Timeout {
+                        seconds: self.timeout.as_secs(),
+                        url: url.to_string(),
+                    }
+                } else {
+                    BiometalError::Network(e.to_string())
+                }
+            })?;
+
+        if !response.status().is_success() {
+            return Err(BiometalError::Http {
+                status: response.status().as_u16(),
+                url: url.to_string(),
+            });
+        }
+
+        // Extract Content-Length header if present
+        Ok(response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok()))
+    }
+
     /// Clear the cache
-    pub fn clear_cache(&self) {
-        let mut cache = self.cache.lock().unwrap();
+    ///
+    /// # Errors
+    ///
+    /// Returns error if cache lock is poisoned
+    pub fn clear_cache(&self) -> Result<()> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|e| BiometalError::Cache(format!("Cache lock poisoned: {}", e)))?;
         cache.clear();
+        Ok(())
     }
 
     /// Get cache statistics
-    pub fn cache_stats(&self) -> CacheStats {
-        let cache = self.cache.lock().unwrap();
-        CacheStats {
+    ///
+    /// # Errors
+    ///
+    /// Returns error if cache lock is poisoned
+    pub fn cache_stats(&self) -> Result<CacheStats> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|e| BiometalError::Cache(format!("Cache lock poisoned: {}", e)))?;
+        Ok(CacheStats {
             entries: cache.len(),
-            capacity: cache.cap().get(),
-        }
+            current_bytes: cache.current_bytes(),
+            max_bytes: cache.max_bytes(),
+        })
     }
 }
 
@@ -287,8 +458,10 @@ impl Default for HttpClient {
 pub struct CacheStats {
     /// Number of entries currently in cache
     pub entries: usize,
-    /// Maximum cache capacity (number of entries)
-    pub capacity: usize,
+    /// Current cache size in bytes
+    pub current_bytes: usize,
+    /// Maximum cache size in bytes
+    pub max_bytes: usize,
 }
 
 /// Reader that streams data from HTTP with range requests
@@ -330,11 +503,14 @@ impl HttpReader {
 
     /// Create reader with existing HTTP client (shares cache)
     pub fn with_client(client: HttpClient, url: &str) -> Result<Self> {
+        // Try to get content length via HEAD request
+        let total_size = client.get_content_length(url)?;
+
         Ok(Self {
             client,
             url: url.to_string(),
             position: 0,
-            total_size: None,
+            total_size,
             chunk_size: 65 * 1024, // Default: 65 KB (typical bgzip block size)
         })
     }
@@ -355,8 +531,26 @@ impl Read for HttpReader {
             return Ok(0);
         }
 
+        // Check for EOF if we know the total size
+        if let Some(total) = self.total_size {
+            if self.position >= total {
+                return Ok(0); // EOF
+            }
+        }
+
         // Determine how many bytes to fetch
-        let fetch_size = buf.len().min(self.chunk_size);
+        let mut fetch_size = buf.len().min(self.chunk_size);
+
+        // If we know total size, don't read past EOF
+        if let Some(total) = self.total_size {
+            let remaining = total.saturating_sub(self.position);
+            fetch_size = fetch_size.min(remaining as usize);
+        }
+
+        if fetch_size == 0 {
+            return Ok(0); // EOF
+        }
+
         let end = self.position + fetch_size as u64;
 
         // Fetch data
@@ -364,6 +558,11 @@ impl Read for HttpReader {
             .client
             .fetch_range(&self.url, self.position, end)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        // Handle empty response (indicates EOF even if total_size unknown)
+        if data.is_empty() {
+            return Ok(0);
+        }
 
         // Copy to buffer
         let n = data.len().min(buf.len());
@@ -406,17 +605,82 @@ mod tests {
         assert!(client.is_ok());
 
         let client = client.unwrap();
-        let stats = client.cache_stats();
+        let stats = client.cache_stats().unwrap();
         assert_eq!(stats.entries, 0);
-        assert!(stats.capacity > 0);
+        assert_eq!(stats.current_bytes, 0);
+        assert_eq!(stats.max_bytes, DEFAULT_CACHE_SIZE);
     }
 
     #[test]
     fn test_cache_size_calculation() {
         let client = HttpClient::with_cache_size(1024 * 1024).unwrap(); // 1 MB
-        let stats = client.cache_stats();
+        let stats = client.cache_stats().unwrap();
 
-        // Should hold ~15 bgzip blocks (1MB / 65KB)
-        assert!(stats.capacity >= 10 && stats.capacity <= 20);
+        // Cache should be empty initially
+        assert_eq!(stats.entries, 0);
+        assert_eq!(stats.current_bytes, 0);
+        assert_eq!(stats.max_bytes, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_byte_bounded_cache() {
+        let mut cache = ByteBoundedCache::new(1024); // 1 KB cache
+
+        // Add 512 byte entry
+        let key1 = CacheKey {
+            url: "https://example.com/file1".to_string(),
+            start: 0,
+            end: 512,
+        };
+        let data1 = Bytes::from(vec![0u8; 512]);
+        cache.put(key1.clone(), data1);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.current_bytes(), 512);
+
+        // Add another 512 byte entry (should fit)
+        let key2 = CacheKey {
+            url: "https://example.com/file2".to_string(),
+            start: 0,
+            end: 512,
+        };
+        let data2 = Bytes::from(vec![1u8; 512]);
+        cache.put(key2.clone(), data2);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.current_bytes(), 1024);
+
+        // Add another 512 byte entry (should evict first entry)
+        let key3 = CacheKey {
+            url: "https://example.com/file3".to_string(),
+            start: 0,
+            end: 512,
+        };
+        let data3 = Bytes::from(vec![2u8; 512]);
+        cache.put(key3.clone(), data3);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.current_bytes(), 1024);
+
+        // key1 should have been evicted (LRU)
+        assert!(cache.get(&key1).is_none());
+        // key2 and key3 should still be present
+        assert!(cache.get(&key2).is_some());
+        assert!(cache.get(&key3).is_some());
+    }
+
+    #[test]
+    fn test_byte_bounded_cache_oversized() {
+        let mut cache = ByteBoundedCache::new(512); // 512 byte cache
+
+        // Try to add 1 KB entry (should not be cached)
+        let key = CacheKey {
+            url: "https://example.com/file".to_string(),
+            start: 0,
+            end: 1024,
+        };
+        let data = Bytes::from(vec![0u8; 1024]);
+        cache.put(key.clone(), data);
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.current_bytes(), 0);
+        assert!(cache.get(&key).is_none());
     }
 }
