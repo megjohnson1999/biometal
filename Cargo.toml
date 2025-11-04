@@ -35,6 +35,7 @@ pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
 [dev-dependencies]
 criterion = "0.5"       # Benchmarking
 proptest = "1.4"        # Property-based testing
+wiremock = "0.6"        # HTTP mock server for integration tests
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 # ARM NEON is in std::arch, no external dependency needed

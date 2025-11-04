@@ -816,4 +816,7 @@ mod tests {
         assert_eq!(DEFAULT_MAX_RETRIES, 3);
         assert_eq!(DEFAULT_PREFETCH_COUNT, 4);
     }
+
+    // Integration tests are in tests/network_integration.rs
+    // This avoids tokio runtime conflicts with wiremock
 }
