@@ -23,9 +23,11 @@ thiserror = "1.0"       # Derive Error trait
 # Parallel processing
 rayon = "1.8"           # Parallel bgzip (Rule 3)
 
-# Network streaming (Week 3-4)
+# Network streaming (Week 3-4) - Rule 6
 reqwest = { version = "0.11", features = ["stream", "blocking"], optional = true }
 lru = { version = "0.12", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync"], optional = true }
+bytes = { version = "1", optional = true }
 
 # Python bindings (Week 5-6)
 pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
@@ -41,9 +43,9 @@ proptest = "1.4"        # Property-based testing
 libc = "0.2"            # For madvise on macOS (Rule 4)
 
 [features]
-default = []
-network = ["reqwest", "lru"]  # Enable network streaming (Week 3-4)
-python = ["pyo3"]              # Enable Python bindings (Week 5-6)
+default = ["network"]  # Enable network streaming by default (Rule 6)
+network = ["dep:reqwest", "dep:lru", "dep:tokio", "dep:bytes"]
+python = ["dep:pyo3"]
 
 [[bench]]
 name = "operations"

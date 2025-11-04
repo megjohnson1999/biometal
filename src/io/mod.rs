@@ -13,8 +13,8 @@ pub use fasta::FastaStream;
 pub use fastq::FastqStream;
 pub use paired::PairedFastqStream;
 
-// Week 3-4: Implement network streaming (Rule 6)
-// #[cfg(feature = "network")]
-// mod network;
-// #[cfg(feature = "network")]
-// pub use network::NetworkStream;
+// Week 3-4: Network streaming (Rule 6)
+#[cfg(feature = "network")]
+pub mod network;
+#[cfg(feature = "network")]
+pub use network::{HttpClient, HttpReader};

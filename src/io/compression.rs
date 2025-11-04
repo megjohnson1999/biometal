@@ -93,15 +93,22 @@ impl DataSource {
             DataSource::Local(path) => open_local_file(path),
 
             #[cfg(feature = "network")]
-            DataSource::Http(_url) => {
-                // Stub for Week 3-4
-                Err(BiometalError::NetworkNotYetImplemented)
+            DataSource::Http(url) => {
+                use crate::io::network::HttpReader;
+                let reader = HttpReader::new(&url)?;
+                Ok(Box::new(std::io::BufReader::new(reader)))
             }
 
             #[cfg(feature = "network")]
-            DataSource::Sra(_accession) => {
-                // Stub for Week 3-4
-                Err(BiometalError::NetworkNotYetImplemented)
+            DataSource::Sra(accession) => {
+                // Convert SRA accession to HTTP URL
+                // SRA provides HTTP access via: https://sra-download.ncbi.nlm.nih.gov/traces/sra{N}/{accession}
+                // where N is derived from accession
+                // For now, return error - full SRA implementation in Week 4
+                Err(BiometalError::Network(format!(
+                    "SRA streaming not yet implemented for accession: {}. Coming in Week 4.",
+                    accession
+                )))
             }
         }
     }
@@ -689,16 +696,7 @@ mod tests {
         }
     }
 
-    #[test]
-    #[cfg(feature = "network")]
-    fn test_network_not_yet_implemented() {
-        // Week 3-4 features should return appropriate error
-        let http_source = DataSource::Http("https://example.com/data.fq.gz".to_string());
-        assert!(matches!(
-            http_source.open(),
-            Err(BiometalError::NetworkNotYetImplemented)
-        ));
-    }
+    // Network streaming tests moved to io/network.rs module
 
     #[test]
     fn test_bgzip_block_parsing() {

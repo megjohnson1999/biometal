@@ -47,14 +47,35 @@ pub enum BiometalError {
     #[error("Paired-end files have different lengths")]
     PairedEndLengthMismatch,
 
-    /// Network streaming not yet implemented (stub for Week 3-4)
-    #[error("Network streaming not yet implemented (coming in Week 3-4)")]
-    NetworkNotYetImplemented,
-
-    /// Network error (Week 3-4)
+    /// Network error (Rule 6)
     #[cfg(feature = "network")]
     #[error("Network error: {0}")]
     Network(String),
+
+    /// HTTP error (Rule 6)
+    #[cfg(feature = "network")]
+    #[error("HTTP error {status}: {url}")]
+    Http {
+        /// HTTP status code
+        status: u16,
+        /// URL that failed
+        url: String,
+    },
+
+    /// Network timeout (Rule 6)
+    #[cfg(feature = "network")]
+    #[error("Network timeout after {seconds}s: {url}")]
+    Timeout {
+        /// Timeout duration in seconds
+        seconds: u64,
+        /// URL that timed out
+        url: String,
+    },
+
+    /// Cache error
+    #[cfg(feature = "network")]
+    #[error("Cache error: {0}")]
+    Cache(String),
 
     /// Metal GPU not available
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
