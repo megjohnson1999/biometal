@@ -4,10 +4,14 @@
 //! regardless of dataset size, following Rules 2-6 from OPTIMIZATION_RULES.md.
 
 pub mod compression;
+mod fasta;
 mod fastq;
+mod paired;
 
 pub use compression::{decompress_bgzip_parallel, CompressedReader, DataSource, MMAP_THRESHOLD};
+pub use fasta::FastaStream;
 pub use fastq::FastqStream;
+pub use paired::PairedFastqStream;
 
 // Week 3-4: Implement network streaming (Rule 6)
 // #[cfg(feature = "network")]

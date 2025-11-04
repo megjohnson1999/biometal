@@ -53,8 +53,8 @@ pub mod types;
 
 // Re-export commonly used types
 pub use error::{BiometalError, Result};
-pub use io::FastqStream;
-pub use types::FastqRecord;
+pub use io::{FastaStream, FastqStream, PairedFastqStream};
+pub use types::{FastaRecord, FastqRecord};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
