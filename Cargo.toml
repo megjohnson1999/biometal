@@ -1,6 +1,6 @@
 [package]
 name = "biometal"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Scott Handley <scott.handley@example.com>"]
 description = "ARM-native bioinformatics library with streaming architecture and evidence-based optimization"
@@ -51,6 +51,11 @@ python = ["dep:pyo3"]
 [[bench]]
 name = "operations"
 harness = false
+
+[[bench]]
+name = "network_streaming"
+harness = false
+required-features = ["network"]
 
 [profile.release]
 lto = true

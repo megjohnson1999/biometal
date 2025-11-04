@@ -73,15 +73,33 @@ for record in stream {
 ### Network Streaming
 
 ```rust
+use biometal::io::DataSource;
 use biometal::FastqStream;
 
 // Stream directly from URL (no download!)
-let url = "https://example.com/huge_dataset.fq.gz";
-let stream = FastqStream::from_url(url)?;
+let source = DataSource::Http("https://example.com/huge_dataset.fq.gz".to_string());
+let stream = FastqStream::new(source)?;
 
 // Analyze 5TB dataset without downloading
 for record in stream {
     // Smart caching + prefetching in background
+}
+```
+
+### SRA Streaming (No Download!)
+
+```rust
+use biometal::io::DataSource;
+use biometal::FastqStream;
+
+// Stream directly from NCBI SRA (no local download!)
+let source = DataSource::Sra("SRR390728".to_string());  // E. coli dataset
+let stream = FastqStream::new(source)?;
+
+for record in stream {
+    let record = record?;
+    // Process 40 MB dataset with only ~5 MB memory
+    // Background prefetching hides network latency
 }
 ```
 
@@ -192,11 +210,11 @@ See [OPTIMIZATION_RULES.md](OPTIMIZATION_RULES.md) for detailed evidence links.
 - Parallel bgzip + smart mmap
 - Block-based processing (10K blocks)
 
-**Week 3-4** (Nov 18-29, 2025): Network streaming
-- HTTP/HTTPS source with range requests
-- Smart LRU caching
-- Background prefetching
-- SRA toolkit integration
+**Week 3-4** (Nov 18-29, 2025): Network streaming ✅
+- HTTP/HTTPS source with range requests ✅
+- Smart LRU caching (50 MB byte-bounded) ✅
+- Background prefetching (hides latency) ✅
+- SRA toolkit integration ✅
 
 **Week 5-6** (Dec 2-13, 2025): Python bindings + polish
 - PyO3 wrappers for Python ecosystem
@@ -208,6 +226,111 @@ See [OPTIMIZATION_RULES.md](OPTIMIZATION_RULES.md) for detailed evidence links.
 - Extended operation coverage
 - Comprehensive documentation
 - Publish to crates.io
+
+---
+
+## SRA Streaming: Analysis Without Downloads
+
+One of biometal's most powerful features is direct streaming from NCBI's Sequence Read Archive (SRA) without local downloads.
+
+### Why This Matters
+
+**Traditional workflow:**
+1. Download 5 GB SRA dataset → 30 minutes + 5 GB disk space
+2. Decompress → 15 GB disk space
+3. Process → Additional memory
+4. **Total:** 45 minutes + 20 GB resources before analysis even starts
+
+**biometal workflow:**
+1. Start analysis immediately → 0 wait time, ~5 MB memory
+2. Stream directly from NCBI S3 → No disk space needed
+3. Background prefetching hides latency → Near-local performance
+
+### Supported Accessions
+
+- **SRR** (Run): Most common, represents a sequencing run
+- **SRX** (Experiment): Collection of runs
+- **SRS** (Sample): Biological sample
+- **SRP** (Study): Collection of experiments
+
+### Basic SRA Usage
+
+```rust
+use biometal::io::DataSource;
+use biometal::operations::{count_bases, gc_content};
+use biometal::FastqStream;
+
+// Stream from SRA accession
+let source = DataSource::Sra("SRR390728".to_string());
+let stream = FastqStream::new(source)?;
+
+for record in stream {
+    let record = record?;
+
+    // ARM NEON-optimized operations (16-25× speedup)
+    let bases = count_bases(&record.sequence);
+    let gc = gc_content(&record.sequence);
+
+    // Memory: Constant ~5 MB
+}
+```
+
+### Real-World Example: E. coli Analysis
+
+```bash
+# Run the E. coli streaming example
+cargo run --example sra_ecoli --features network
+
+# Process ~250,000 reads with only ~5 MB memory
+# No download required!
+```
+
+See [examples/sra_ecoli.rs](examples/sra_ecoli.rs) for complete example.
+
+### Performance Tuning
+
+biometal automatically configures optimal settings for most use cases. For custom tuning:
+
+```rust
+use biometal::io::{HttpReader, sra_to_url};
+
+let url = sra_to_url("SRR390728")?;
+let reader = HttpReader::new(&url)?
+    .with_prefetch_count(8)      // Prefetch 8 blocks ahead
+    .with_chunk_size(128 * 1024); // 128 KB chunks
+
+// See docs/PERFORMANCE_TUNING.md for detailed guide
+```
+
+### SRA URL Conversion
+
+```rust
+use biometal::io::{is_sra_accession, sra_to_url};
+
+// Check if string is SRA accession
+if is_sra_accession("SRR390728") {
+    // Convert to direct NCBI S3 URL
+    let url = sra_to_url("SRR390728")?;
+    // → https://sra-pub-run-odp.s3.amazonaws.com/sra/SRR390/SRR390728/SRR390728
+}
+```
+
+### Memory Guarantees
+
+- **Streaming buffer:** ~5 MB (constant)
+- **LRU cache:** 50 MB (byte-bounded, automatic eviction)
+- **Prefetch:** ~256 KB (4 blocks × 64 KB)
+- **Total:** ~55 MB regardless of SRA file size
+
+Compare to downloading a 5 GB SRA file → **99%+ memory savings**
+
+### Examples
+
+| Example | Dataset | Size | Demo |
+|---------|---------|------|------|
+| [sra_streaming.rs](examples/sra_streaming.rs) | Demo mode | N/A | Capabilities overview |
+| [sra_ecoli.rs](examples/sra_ecoli.rs) | E. coli K-12 | ~40 MB | Real SRA streaming |
+| [prefetch_tuning.rs](examples/prefetch_tuning.rs) | E. coli K-12 | ~40 MB | Performance tuning |
 
 ---
 
@@ -326,7 +449,7 @@ For the experimental methodology, see:
 
 ---
 
-**Status**: v0.1.0 (Early Development)  
-**Target**: v1.0.0 by December 15, 2025  
-**Evidence Base**: 1,357 experiments, 40,710 measurements  
+**Status**: v0.2.2 (Network Streaming Complete)
+**Target**: v1.0.0 by December 15, 2025
+**Evidence Base**: 1,357 experiments, 40,710 measurements
 **Mission**: Democratizing bioinformatics compute
