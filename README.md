@@ -1,3 +1,7 @@
+<div align="right">
+  <img src="biometal_logo.png" alt="biometal logo" width="150"/>
+</div>
+
 # biometal
 
 **ARM-native bioinformatics library with streaming architecture and evidence-based optimization**
