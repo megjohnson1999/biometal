@@ -20,6 +20,7 @@
 //! - `masking`: Quality-based masking operations
 //! - `kmer`: K-mer operations (scalar-only, data-structure-bound)
 //! - `nthash`: ntHash rolling hash for genomic sequences (v1.3.0+)
+//! - `sliding_min`: Sliding window minimum (monotonic deque, O(1) amortized)
 
 pub mod base_counting;
 pub mod complexity;
@@ -28,6 +29,7 @@ pub mod kmer;
 pub mod masking;
 pub mod nthash;
 pub mod quality_filter;
+pub mod sliding_min;
 pub mod record_ops;
 pub mod sequence;
 pub mod trimming;
