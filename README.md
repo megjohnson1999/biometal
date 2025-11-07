@@ -279,6 +279,168 @@ kmers = extractor.extract(large_dataset, k=6)  # 2.2× faster
 
 This validates minimap2's scalar design and identifies a 2.2× optimization opportunity for DNABert preprocessing.
 
+### Sequence Manipulation Operations (Phase 4)
+
+biometal provides comprehensive sequence manipulation primitives for read processing pipelines. All operations maintain production quality with proper error handling.
+
+#### Python: Sequence Operations
+
+```python
+import biometal
+
+# 1. Reverse complement (standard molecular biology operation)
+sequence = b"ATGCATGC"
+rc = biometal.reverse_complement(sequence)  # b"GCATGCAT"
+
+# 2. Complement only (preserves 5'→3' orientation)
+comp = biometal.complement(sequence)  # b"TACGTACG"
+
+# 3. Reverse only (no complementation)
+rev = biometal.reverse(sequence)  # b"CGTAGCTA"
+
+# 4. Sequence validation
+if biometal.is_valid_dna(sequence):
+    print("Valid DNA sequence")
+
+if biometal.is_valid_rna(b"AUGCAUGC"):
+    print("Valid RNA sequence")
+
+# 5. Count invalid bases (for QC)
+invalid_count = biometal.count_invalid_bases(sequence)
+print(f"Invalid bases: {invalid_count}")
+```
+
+#### Python: Record Operations
+
+```python
+import biometal
+
+stream = biometal.FastqStream.from_path("data.fq.gz")
+
+for record in stream:
+    # 1. Extract region [start, end)
+    region = biometal.extract_region(record, start=10, end=50)
+    print(f"Extracted 40bp region: {len(region.sequence)}bp")
+
+    # 2. Reverse complement record (preserves quality alignment)
+    rc_record = biometal.reverse_complement_record(record)
+    # Both sequence AND quality are reversed
+
+    # 3. Get sequence length
+    length = biometal.sequence_length(record)
+
+    # 4. Length filtering
+    if biometal.meets_length_requirement(record, min_len=50, max_len=150):
+        print("Read passes length filter")
+
+    # 5. Convert FASTQ → FASTA (drops quality scores)
+    fasta = biometal.to_fasta_record(record)
+    print(f">{fasta.id}")
+    print(fasta.sequence_str)
+
+    break
+```
+
+#### Python: Quality-Based Trimming
+
+```python
+import biometal
+
+stream = biometal.FastqStream.from_path("data.fq.gz")
+
+for record in stream:
+    # 1. Fixed position trimming
+    trimmed = biometal.trim_start(record, bases=10)  # Remove first 10bp
+    trimmed = biometal.trim_end(record, bases=5)     # Remove last 5bp
+    trimmed = biometal.trim_both(record, start_bases=10, end_bases=5)
+
+    # 2. Quality-based trimming (Phred+33, Q20 = 99% accuracy)
+    trimmed = biometal.trim_quality_end(record, min_quality=20)
+    trimmed = biometal.trim_quality_start(record, min_quality=20)
+    trimmed = biometal.trim_quality_both(record, min_quality=20)
+
+    # 3. Sliding window trimming (Trimmomatic-style)
+    # Trim when 4bp window average drops below Q20
+    trimmed = biometal.trim_quality_window(record, min_quality=20, window_size=4)
+
+    # 4. QC pipeline: trim + length filter
+    trimmed = biometal.trim_quality_both(record, min_quality=20)
+    if len(trimmed.sequence) >= 50:  # Keep only ≥50bp after trimming
+        print(f"Pass QC: {len(trimmed.sequence)}bp after trimming")
+
+    break
+```
+
+#### Python: Quality-Based Masking
+
+```python
+import biometal
+
+stream = biometal.FastqStream.from_path("data.fq.gz")
+
+for record in stream:
+    # Mask low-quality bases with 'N' (preserves length unlike trimming)
+    masked = biometal.mask_low_quality(record, min_quality=20)
+
+    # Count masked bases (for QC metrics)
+    n_count = biometal.count_masked_bases(masked)
+    mask_rate = n_count / len(masked.sequence)
+
+    # Quality filter: reject if >10% masked
+    if mask_rate < 0.1:
+        print(f"Pass QC: {mask_rate*100:.1f}% masked")
+    else:
+        print(f"Fail QC: {mask_rate*100:.1f}% masked")
+
+    break
+```
+
+#### Python: Complete QC Pipeline
+
+```python
+import biometal
+
+# Quality control pipeline: trim → filter → mask
+stream = biometal.FastqStream.from_path("raw_reads.fq.gz")
+
+passed = 0
+failed_quality = 0
+failed_length = 0
+
+for record in stream:
+    # Step 1: Quality-based trimming (Q20, Trimmomatic-style)
+    trimmed = biometal.trim_quality_window(record, min_quality=20, window_size=4)
+
+    # Step 2: Length filter (keep 50-150bp)
+    if not biometal.meets_length_requirement(trimmed, min_len=50, max_len=150):
+        failed_length += 1
+        continue
+
+    # Step 3: Mask remaining low-quality bases
+    masked = biometal.mask_low_quality(trimmed, min_quality=20)
+
+    # Step 4: Final QC check (<10% masked)
+    mask_rate = biometal.count_masked_bases(masked) / len(masked.sequence)
+    if mask_rate > 0.1:
+        failed_quality += 1
+        continue
+
+    passed += 1
+    # Write to output or process further
+
+print(f"QC Results:")
+print(f"  Passed: {passed}")
+print(f"  Failed (length): {failed_length}")
+print(f"  Failed (quality): {failed_quality}")
+```
+
+**Use Cases**:
+- **Trimming**: Remove low-quality ends before alignment (preserves high-quality core)
+- **Masking**: Variant calling pipelines (preserves read structure for alignment)
+- **Region extraction**: Extract specific genomic windows or features
+- **Reverse complement**: Convert reads to correct strand orientation
+- **FASTQ→FASTA**: Convert after quality filtering for downstream tools
+
 ---
 
 ## Performance

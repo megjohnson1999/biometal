@@ -70,6 +70,17 @@ impl From<FastqRecord> for PyFastqRecord {
     }
 }
 
+impl PyFastqRecord {
+    /// Convert PyFastqRecord to internal FastqRecord
+    pub(crate) fn to_fastq_record(&self) -> FastqRecord {
+        FastqRecord {
+            id: self.id.clone(),
+            sequence: self.sequence.clone(),
+            quality: self.quality.clone(),
+        }
+    }
+}
+
 /// FASTA record with sequence and metadata
 ///
 /// Attributes:
