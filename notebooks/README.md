@@ -39,29 +39,31 @@ Build complete QC pipelines:
 
 **Perfect for**: Pre-processing reads for downstream analysis, **showcases v1.2.0 Phase 4 features**
 
-#### 03_kmer_analysis.ipynb
-**Duration**: 30-40 minutes | **Status**: 🚧 Planned
+#### [03_kmer_analysis.ipynb](03_kmer_analysis.ipynb)
+**Duration**: 30-40 minutes | **Status**: ✅ Complete
 
 K-mer extraction for machine learning:
-- K-mer extraction for DNABert/DNABERT-2
-- Minimizers for indexing (minimap2-style)
-- K-mer spectrum analysis
-- Parallel extraction for large datasets
-- Feeding to ML models
+- K-mer extraction for DNABert/DNABERT-2 (k=3-6)
+- Minimizers for indexing (minimap2-style, w=10)
+- K-mer spectrum analysis (frequency distribution)
+- Parallel extraction (2.2× speedup, ≥1000 sequences)
+- Complete ML preprocessing pipeline
+- Evidence-based design (Entry 034)
 
-**Perfect for**: ML practitioners, transformer model preprocessing
+**Perfect for**: ML practitioners, transformer model preprocessing, **showcases v1.1.0 k-mer features**
 
-#### 04_sra_streaming.ipynb
-**Duration**: 30-40 minutes | **Status**: 🚧 Planned
+#### [04_network_streaming.ipynb](04_network_streaming.ipynb)
+**Duration**: 30-40 minutes | **Status**: ✅ Complete
 
-Analyze without downloading:
-- Streaming directly from NCBI SRA
-- Network streaming architecture
-- Memory efficiency demonstration
-- Real-world E. coli analysis (SRR390728)
-- Performance tuning
+Network streaming without downloading:
+- HTTP streaming with range requests
+- Constant memory (~5 MB for any file size)
+- Public data access (ENA, cloud storage)
+- Network configuration and tuning
+- SRA concepts and limitations
+- Complete remote QC pipeline
 
-**Perfect for**: Working with public datasets, cloud analysis
+**Perfect for**: Working with public datasets, cloud analysis, **democratizing access to TB-scale data**
 
 ---
 
@@ -118,15 +120,14 @@ Open `01_getting_started.ipynb` and run all cells (Cell → Run All).
 ### Practical Skills
 ✅ Quality control pipelines (trim, filter, mask)
 ✅ K-mer extraction for ML (DNABert preprocessing)
-✅ SRA streaming (access public data instantly)
-✅ Memory-efficient processing (constant memory)
+✅ Network streaming (HTTP, analyze without downloading)
+✅ Memory-efficient processing (constant ~5 MB)
 
-### biom
-
-etal Features (v1.2.0)
+### biometal Features (v1.2.0)
 ✅ **Core Operations**: GC content, base counting, quality scores (v1.0.0)
 ✅ **K-mer Operations**: Extraction, minimizers, spectrum (v1.1.0)
 ✅ **Phase 4 Operations**: Trimming, masking, sequence manipulation (v1.2.0)
+✅ **Network Streaming**: HTTP range requests, constant memory (v1.0.0)
 
 ---
 
@@ -156,7 +157,7 @@ After completing these notebooks, you will be able to:
 1. **Stream and analyze** large FASTQ/FASTA files with constant memory
 2. **Build QC pipelines** for read preprocessing (trim → filter → mask)
 3. **Extract k-mers** for machine learning (DNABert, transformers)
-4. **Stream from SRA** to analyze public data without downloading
+4. **Stream from HTTP** to analyze public data without downloading
 5. **Write production pipelines** using biometal's streaming API
 6. **Optimize performance** on Apple Silicon (ARM NEON)
 
@@ -184,11 +185,12 @@ Each notebook follows this structure:
 - Small E. coli samples (~1000 reads)
 - Bacterial sequences for k-mer analysis
 
-### Streamed Real Data
-- **SRR390728**: E. coli K-12 (~250K reads, 40 MB)
-  - Streamed directly from NCBI SRA
-  - No download required!
-  - Used in notebooks 04 and 05
+### Network Streaming Examples
+- **Public FASTQ data**: ENA, cloud storage (S3, GCS, Azure)
+  - Stream via HTTP (no download required!)
+  - Constant memory (~5 MB)
+  - Demonstrated in notebook 04
+- **Future**: Direct SRA streaming (requires SRA Toolkit)
 
 ---
 
