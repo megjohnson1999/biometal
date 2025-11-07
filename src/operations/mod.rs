@@ -61,6 +61,8 @@ pub use trimming::{
 pub use masking::{count_masked_bases, mask_low_quality, mask_low_quality_copy};
 
 // K-mer operations (Rule 7: scalar-only, data-structure-bound)
+// + ntHash + sliding_min optimized minimizers (v1.3.0)
 pub use kmer::{
-    extract_kmers, extract_minimizers, kmer_iter, kmer_spectrum, KmerExtractor, Minimizer,
+    extract_kmers, extract_minimizers, extract_minimizers_fast, kmer_iter, kmer_spectrum,
+    KmerExtractor, Minimizer,
 };
