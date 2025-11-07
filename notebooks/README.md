@@ -26,17 +26,18 @@ Learn the basics of biometal:
 
 ### Intermediate Level (Coming Soon)
 
-#### 02_quality_control_pipeline.ipynb
-**Duration**: 30-40 minutes | **Status**: 🚧 In Development
+#### [02_quality_control_pipeline.ipynb](02_quality_control_pipeline.ipynb)
+**Duration**: 30-40 minutes | **Status**: ✅ Complete
 
 Build complete QC pipelines:
+- Fixed position trimming (adapter removal)
 - Quality-based trimming (Trimmomatic-style sliding window)
-- Length filtering
-- Quality-based masking
-- QC metrics and visualization
+- Length filtering (meets_length_requirement)
+- Quality-based masking (variant calling pipelines)
 - Complete trim → filter → mask workflow
+- Production-ready reusable function
 
-**Perfect for**: Pre-processing reads for downstream analysis
+**Perfect for**: Pre-processing reads for downstream analysis, **showcases v1.2.0 Phase 4 features**
 
 #### 03_kmer_analysis.ipynb
 **Duration**: 30-40 minutes | **Status**: 🚧 Planned
