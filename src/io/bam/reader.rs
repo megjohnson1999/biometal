@@ -8,19 +8,16 @@
 //! - Iterator-based interface (constant memory)
 //! - Header read separately from records
 //! - Records are not accumulated (streaming)
-//! - Compatible with BGZF decompression (Phase 2 will add parallel BGZF)
+//! - **Phase 2**: Parallel BGZF decompression (6.5× speedup, Rule 3)
 //!
 //! # Usage
 //!
 //! ```no_run
 //! use biometal::io::bam::BamReader;
-//! use std::fs::File;
-//! use std::io::BufReader;
 //!
-//! # fn main() -> std::io::Result<()> {
-//! let file = File::open("alignments.bam")?;
-//! let reader = BufReader::new(file);
-//! let mut bam = BamReader::new(reader)?;
+//! # fn main() -> biometal::Result<()> {
+//! // Automatically uses parallel BGZF decompression for .bam files
+//! let mut bam = BamReader::from_path("alignments.bam")?;
 //!
 //! println!("Header: {} references", bam.header().reference_count());
 //!
@@ -34,9 +31,9 @@
 
 use super::header::{read_header, Header};
 use super::record::{parse_record, Record};
+use crate::io::compression::{CompressedReader, DataSource};
 use std::io::{self, BufRead};
 use std::path::Path;
-use std::fs::File;
 
 /// BAM file reader with streaming interface.
 ///
@@ -197,32 +194,55 @@ impl<R: BufRead> BamReader<R> {
     }
 }
 
-impl BamReader<std::io::BufReader<File>> {
-    /// Open a BAM file from a path.
+impl BamReader<CompressedReader> {
+    /// Open a BAM file from a path with automatic parallel BGZF decompression.
     ///
-    /// Convenience method that creates a BufReader internally.
+    /// **Phase 2**: Integrates parallel BGZF decompression (Rule 3: 6.5× speedup).
+    ///
+    /// # Performance (Rule 3)
+    ///
+    /// - Automatically detects BGZF compression (peeks at magic bytes)
+    /// - If compressed: Uses parallel decompression (8 blocks, 6.5× speedup)
+    /// - If uncompressed: Direct passthrough (no overhead)
+    /// - Maintains constant ~1 MB memory (Rule 5)
+    ///
+    /// # Evidence
+    ///
+    /// - Rule 3 (Parallel BGZF): Entry 029, validated 6.5× speedup
+    /// - Expected overall speedup: ~4-5× for typical BAM parsing workloads
     ///
     /// # Errors
     ///
     /// Returns error if:
     /// - File cannot be opened
     /// - Header is invalid
+    /// - Decompression fails
     ///
     /// # Example
     ///
     /// ```no_run
     /// use biometal::io::bam::BamReader;
     ///
-    /// # fn main() -> std::io::Result<()> {
+    /// # fn main() -> biometal::Result<()> {
+    /// // Automatically uses parallel BGZF for .bam files (6.5× faster)
     /// let bam = BamReader::from_path("alignments.bam")?;
     /// println!("Opened BAM with {} references", bam.header().reference_count());
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let reader = std::io::BufReader::new(file);
-        Self::new(reader)
+    pub fn from_path<P: AsRef<Path>>(path: P) -> crate::Result<Self> {
+        // Create data source (supports local files, Rule 6 future: HTTP/SRA)
+        let source = DataSource::from_path(path);
+
+        // Create compressed reader with automatic BGZF detection
+        // - Peeks at magic bytes (31, 139) to detect gzip
+        // - If BGZF: Parallel decompression (Rule 3: 6.5× speedup)
+        // - If uncompressed: Direct passthrough
+        let reader = CompressedReader::new(source)?;
+
+        // Create BAM reader from compressed reader
+        // - io::Error automatically converts to BiometalError via From trait
+        Ok(Self::new(reader)?)
     }
 }
 
