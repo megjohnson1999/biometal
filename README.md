@@ -127,6 +127,7 @@ Learn biometal through hands-on Jupyter notebooks (4 complete, ~2 hours):
 - **Core operations**: GC content, base counting, quality scores
 - **K-mer operations**: Extraction, minimizers, spectrum (v1.1.0)
 - **QC operations**: Trimming, filtering, masking (v1.2.0)
+- **BAM/SAM parser**: Streaming alignment reader (Nov 8, 2025)
 - **40+ Python functions** for bioinformatics workflows
 
 ---
@@ -151,9 +152,9 @@ Learn biometal through hands-on Jupyter notebooks (4 complete, ~2 hours):
 
 | Platform | Performance | Tests | Status |
 |----------|-------------|-------|--------|
-| **Mac ARM** (M1-M4) | **16-25× speedup** | ✅ 347/347 | Optimized |
-| **AWS Graviton** | 6-10× speedup | ✅ 347/347 | Portable |
-| **Linux x86_64** | 1× (scalar) | ✅ 344/344 | Portable |
+| **Mac ARM** (M1-M4) | **16-25× speedup** | ✅ 354/354 | Optimized |
+| **AWS Graviton** | 6-10× speedup | ✅ 354/354 | Portable |
+| **Linux x86_64** | 1× (scalar) | ✅ 354/354 | Portable |
 
 ---
 
@@ -173,10 +174,12 @@ biometal's design is grounded in comprehensive experimental validation:
 **v1.0.0** (Released Nov 5, 2025) ✅ - Core library + network streaming
 **v1.1.0** (Released Nov 6, 2025) ✅ - K-mer operations
 **v1.2.0** (Released Nov 6, 2025) ✅ - Python bindings for Phase 4 QC
+**BAM/SAM** (Integrated Nov 8, 2025) ✅ - Native streaming alignment parser
 
 **Future** (Community Driven):
+- Parallel BGZF decompression for BAM (6.5× estimated speedup)
 - Extended operations (alignment, assembly)
-- Additional formats (BAM/SAM, VCF)
+- Additional formats (VCF, BCF)
 - Metal GPU acceleration (Mac-specific)
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -320,9 +323,9 @@ For the experimental methodology:
 ---
 
 <p align="center">
-<strong>Status:</strong> v1.2.0 - Python Phase 4 Bindings 🎉<br>
-<strong>Released:</strong> November 6, 2025<br>
-<strong>Tests:</strong> 347 passing (260 library + 87 doc)<br>
+<strong>Status:</strong> v1.2.0 + BAM/SAM Parser 🎉<br>
+<strong>Latest:</strong> BAM/SAM integrated November 8, 2025<br>
+<strong>Tests:</strong> 354 passing (267 library + 87 doc)<br>
 <strong>Python Functions:</strong> 40+ (core ops + k-mers + Phase 4)<br>
 <strong>Evidence Base:</strong> 1,357 experiments, 40,710 measurements
 </p>
