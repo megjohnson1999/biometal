@@ -93,7 +93,7 @@ for record in stream:
 
 ## 📓 Interactive Tutorials
 
-Learn biometal through hands-on Jupyter notebooks (4 complete, ~2 hours):
+Learn biometal through hands-on Jupyter notebooks (5 complete, ~2.5 hours):
 
 | Notebook | Duration | Topics |
 |----------|----------|--------|
@@ -101,6 +101,7 @@ Learn biometal through hands-on Jupyter notebooks (4 complete, ~2 hours):
 | [02. Quality Control](notebooks/02_quality_control_pipeline.ipynb) | 30-40 min | Trimming, filtering, masking (v1.2.0) |
 | [03. K-mer Analysis](notebooks/03_kmer_analysis.ipynb) | 30-40 min | ML preprocessing, DNABert (v1.1.0) |
 | [04. Network Streaming](notebooks/04_network_streaming.ipynb) | 30-40 min | HTTP streaming, public data (v1.0.0) |
+| [05. BAM Alignment Analysis](notebooks/05_bam_alignment_analysis.ipynb) | 30-40 min | BAM parsing, 4× speedup, filtering (v1.2.0+) |
 
 👉 **[Browse all tutorials →](notebooks/README.md)**
 

@@ -65,6 +65,19 @@ Network streaming without downloading:
 
 **Perfect for**: Working with public datasets, cloud analysis, **democratizing access to TB-scale data**
 
+#### [05_bam_alignment_analysis.ipynb](05_bam_alignment_analysis.ipynb)
+**Duration**: 30-40 minutes | **Status**: ✅ Complete (Nov 8, 2025)
+
+BAM alignment file analysis with parallel BGZF:
+- Stream BAM files with constant memory (~5 MB)
+- 4× speedup via automatic parallel BGZF decompression
+- Filter by MAPQ, flags, and alignment properties
+- Calculate alignment statistics (mapping rate, coverage)
+- Production QC workflows
+- 4.54 million records/sec throughput
+
+**Perfect for**: Alignment QC, variant calling pipelines, **showcases production BAM parser with 4× speedup**
+
 ---
 
 ### Advanced Level (Future)
@@ -121,13 +134,15 @@ Open `01_getting_started.ipynb` and run all cells (Cell → Run All).
 ✅ Quality control pipelines (trim, filter, mask)
 ✅ K-mer extraction for ML (DNABert preprocessing)
 ✅ Network streaming (HTTP, analyze without downloading)
+✅ BAM alignment analysis (QC, filtering, statistics)
 ✅ Memory-efficient processing (constant ~5 MB)
 
-### biometal Features (v1.2.0)
+### biometal Features (v1.2.0+)
 ✅ **Core Operations**: GC content, base counting, quality scores (v1.0.0)
 ✅ **K-mer Operations**: Extraction, minimizers, spectrum (v1.1.0)
 ✅ **Phase 4 Operations**: Trimming, masking, sequence manipulation (v1.2.0)
 ✅ **Network Streaming**: HTTP range requests, constant memory (v1.0.0)
+✅ **BAM/SAM Parser**: Parallel BGZF, 4× speedup, constant memory (v1.2.0+, Nov 8 2025)
 
 ---
 
@@ -158,8 +173,9 @@ After completing these notebooks, you will be able to:
 2. **Build QC pipelines** for read preprocessing (trim → filter → mask)
 3. **Extract k-mers** for machine learning (DNABert, transformers)
 4. **Stream from HTTP** to analyze public data without downloading
-5. **Write production pipelines** using biometal's streaming API
-6. **Optimize performance** on Apple Silicon (ARM NEON)
+5. **Analyze BAM alignments** with 4× speedup (filter, QC, statistics)
+6. **Write production pipelines** using biometal's streaming API
+7. **Optimize performance** on Apple Silicon (ARM NEON + parallel BGZF)
 
 ---
 
