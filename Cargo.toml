@@ -93,6 +93,10 @@ name = "minimizer_simd"
 harness = false
 required-features = ["simd"]
 
+[[bench]]
+name = "bam_parsing"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
