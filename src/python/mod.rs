@@ -13,6 +13,7 @@ mod sequence;
 mod record_ops;
 mod trimming;
 mod masking;
+mod bam;
 
 pub use records::*;
 pub use streams::*;
@@ -22,6 +23,7 @@ pub use sequence::*;
 pub use record_ops::*;
 pub use trimming::*;
 pub use masking::*;
+pub use bam::*;
 
 /// biometal: ARM-native bioinformatics library
 ///
@@ -46,6 +48,11 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register streaming classes
     m.add_class::<PyFastqStream>()?;
     m.add_class::<PyFastaStream>()?;
+    m.add_class::<PyBamReader>()?;
+
+    // Register BAM types
+    m.add_class::<PyBamRecord>()?;
+    m.add_class::<PyBamHeader>()?;
 
     // Register operations
     m.add_function(wrap_pyfunction!(py_gc_content, m)?)?;

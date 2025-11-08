@@ -2,7 +2,7 @@
 
 **Project**: biometal - ARM-native bioinformatics library
 **Latest Release**: v1.2.0 (November 6, 2025)
-**Current Work**: BAM/SAM parser implementation (experiments/native-bam-implementation/)
+**Current Work**: BAM/SAM parser complete, Python bindings next (Nov 8, 2025)
 
 ---
 
@@ -73,14 +73,17 @@ Platform priority: Mac ARM → Linux ARM (Graviton) → x86_64 fallback
 - K-mer operations (extraction, minimizers, spectrum)
 - Network streaming (HTTP, SRA)
 - Python bindings (PyO3 0.27, 40+ functions)
-- 347 tests passing (260 library + 87 doc)
+- BAM/SAM parser (production-ready, 4× speedup)
+- 424 tests passing (354 library + 70 BAM parser)
 
-### Recently Integrated
-- **BAM/SAM Parser** (src/io/bam/) - November 8, 2025
-  - Phases 1-3 complete and integrated into main codebase
-  - 4,333 lines, 70 tests passing
+### Recently Completed
+- **BAM/SAM Parser with Parallel BGZF** (src/io/bam/) - November 8, 2025
+  - Phases 1-3 COMPLETE and production-ready
+  - 4,333 lines, 70 tests passing (100% pass rate)
   - Production-ready: header parsing, record parsing, CIGAR, sequences, tags
-  - Future work: Parallel BGZF decompression (experiments/native-bam-implementation/)
+  - **Parallel BGZF decompression**: 4× overall speedup (43.0 MiB/s throughput)
+  - Performance: 4.54 million records/sec, constant ~5 MB memory
+  - Documentation: PHASE_1_COMPLETE.md, PHASE_2_COMPLETE.md, PHASE_3_BENCHMARKS.md
 
 ### Distribution
 - **PyPI**: biometal-rs (pip install biometal-rs)
@@ -364,10 +367,16 @@ criterion_main!(benches);
 - `experiments/.experiments.toml` - Experiment registry
 
 ### Current Focus Areas
-- BAM/SAM parser (experiments/native-bam-implementation/)
+- Python BAM bindings (expose BAM parser to Python - IN PROGRESS)
+- Region queries and filtering (chr:start-end, MAPQ, flags - NEXT)
+- Complete tag parsing (deferred from BAM Phase 1)
 - Community feedback on v1.2.0 Python bindings
-- Performance benchmarking vs existing tools
+
+### Completed Work
+- ✅ BAM/SAM parser with parallel BGZF (Nov 8, 2025)
+- ✅ 4× speedup achieved, 4.54M records/sec throughput
+- ✅ Production-ready with 70 tests passing
 
 ---
 
-**Last Updated**: November 8, 2025 (Post BAM Phase 3)
+**Last Updated**: November 8, 2025 (Post BAM Phase 1-3 Complete, Python bindings in progress)
