@@ -240,7 +240,7 @@ impl<W: Write> SamWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::bam::{Tags, TagValue};
+    use crate::io::bam::Tags;
 
     #[test]
     fn test_write_minimal_record() {

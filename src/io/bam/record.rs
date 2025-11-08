@@ -76,6 +76,26 @@ fn read_u8(data: &[u8], cursor: &mut usize) -> io::Result<u8> {
     Ok(value)
 }
 
+/// Validate reference ID per BAM spec.
+///
+/// BAM spec allows only:
+/// - -1 (unmapped)
+/// - >= 0 (valid reference)
+///
+/// Values like -2, -3, etc. are invalid and must be rejected.
+fn parse_reference_id(ref_id: i32, field_name: &str) -> io::Result<Option<usize>> {
+    const UNMAPPED: i32 = -1;
+
+    match ref_id {
+        UNMAPPED => Ok(None),
+        n if n >= 0 => Ok(Some(n as usize)),
+        invalid => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid {} reference ID: {} (must be -1 or >= 0)", field_name, invalid),
+        )),
+    }
+}
+
 /// BAM alignment record.
 ///
 /// Represents a single read alignment with all associated information.
@@ -213,6 +233,14 @@ pub fn parse_record(data: &[u8]) -> io::Result<Record> {
     // Read name length (1 byte)
     let l_read_name = read_u8(data, &mut cursor)? as usize;
 
+    // BAM spec requires l_read_name >= 1 (minimum "*\0" for unmapped reads)
+    if l_read_name == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid read name length at offset {}: must be >= 1", cursor - 1),
+        ));
+    }
+
     // MAPQ (1 byte)
     let mapq = read_u8(data, &mut cursor)?;
 
@@ -345,19 +373,11 @@ pub fn parse_record(data: &[u8]) -> io::Result<Record> {
 
     Ok(Record {
         name,
-        reference_id: if ref_id >= 0 {
-            Some(ref_id as usize)
-        } else {
-            None
-        },
+        reference_id: parse_reference_id(ref_id, "read")?,
         position: if pos >= 0 { Some(pos) } else { None },
         mapq: if mapq != 255 { Some(mapq) } else { None },
         flags,
-        mate_reference_id: if next_ref_id >= 0 {
-            Some(next_ref_id as usize)
-        } else {
-            None
-        },
+        mate_reference_id: parse_reference_id(next_ref_id, "mate")?,
         mate_position: if next_pos >= 0 {
             Some(next_pos)
         } else {
@@ -789,5 +809,82 @@ mod tests {
 
         let result = parse_record(&data);
         assert!(result.is_err());
+    }
+
+    // Noodles-inspired robustness tests
+
+    #[test]
+    fn test_invalid_reference_ids() {
+        // Test various invalid reference IDs (only -1 or >= 0 allowed per spec)
+        for invalid_id in [-2i32, -3, -100, i32::MIN] {
+            let mut data = Vec::new();
+
+            // Block size
+            data.extend_from_slice(&50i32.to_le_bytes());
+            // refID (invalid)
+            data.extend_from_slice(&invalid_id.to_le_bytes());
+            // pos
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // l_read_name
+            data.push(5);
+            // mapq
+            data.push(0);
+            // bin
+            data.extend_from_slice(&0u16.to_le_bytes());
+            // n_cigar_op
+            data.extend_from_slice(&0u16.to_le_bytes());
+            // flag
+            data.extend_from_slice(&0u16.to_le_bytes());
+            // l_seq
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // next_refID
+            data.extend_from_slice(&(-1i32).to_le_bytes());
+            // next_pos
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // tlen
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // read_name
+            data.extend_from_slice(b"read\0");
+
+            let result = parse_record(&data);
+            assert!(result.is_err(), "Should reject ref_id={}", invalid_id);
+            assert!(result.unwrap_err().to_string().contains("Invalid read reference ID"));
+        }
+
+        // Also test invalid mate reference IDs
+        for invalid_id in [-2i32, -3, -100, i32::MIN] {
+            let mut data = Vec::new();
+
+            // Block size
+            data.extend_from_slice(&50i32.to_le_bytes());
+            // refID (valid)
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // pos
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // l_read_name
+            data.push(5);
+            // mapq
+            data.push(0);
+            // bin
+            data.extend_from_slice(&0u16.to_le_bytes());
+            // n_cigar_op
+            data.extend_from_slice(&0u16.to_le_bytes());
+            // flag
+            data.extend_from_slice(&0u16.to_le_bytes());
+            // l_seq
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // next_refID (invalid)
+            data.extend_from_slice(&invalid_id.to_le_bytes());
+            // next_pos
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // tlen
+            data.extend_from_slice(&0i32.to_le_bytes());
+            // read_name
+            data.extend_from_slice(b"read\0");
+
+            let result = parse_record(&data);
+            assert!(result.is_err(), "Should reject next_ref_id={}", invalid_id);
+            assert!(result.unwrap_err().to_string().contains("Invalid mate reference ID"));
+        }
     }
 }

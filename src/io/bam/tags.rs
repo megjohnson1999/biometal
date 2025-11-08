@@ -277,6 +277,7 @@ impl Tags {
     /// ```
     pub fn iter(&self) -> io::Result<Vec<Tag>> {
         let mut tags = Vec::new();
+        let mut seen_tags = std::collections::HashSet::new();
         let mut cursor = 0;
 
         while cursor < self.data.len() {
@@ -289,6 +290,14 @@ impl Tags {
             }
             let tag_name = [self.data[cursor], self.data[cursor + 1]];
             cursor += 2;
+
+            // Check for duplicate tags (BAM spec violation)
+            if !seen_tags.insert(tag_name) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Duplicate tag: {}{}", tag_name[0] as char, tag_name[1] as char),
+                ));
+            }
 
             // Read tag type (1 byte)
             if cursor >= self.data.len() {
@@ -518,7 +527,13 @@ fn parse_tag_value(data: &[u8], type_code: u8) -> io::Result<(TagValue, usize)> 
                 ));
             }
 
-            let count = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+            let count_u32 = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+            let count = usize::try_from(count_u32).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Array count too large for platform: {} (exceeds usize::MAX)", count_u32),
+                )
+            })?;
             let mut offset = 5;
 
             let array_value = match array_type {
@@ -706,5 +721,61 @@ mod tests {
 
         assert_eq!(tags1, tags2);
         assert_ne!(tags1, tags3);
+    }
+
+    // Noodles-inspired robustness tests
+
+    #[test]
+    fn test_duplicate_tags_rejected() {
+        let data = vec![
+            b'N', b'M', b'i', 5, 0, 0, 0,  // NM:i:5
+            b'N', b'M', b'i', 3, 0, 0, 0,  // NM:i:3 (duplicate!)
+        ];
+        let tags = Tags::from_raw(data);
+        let result = tags.iter();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Duplicate tag"));
+    }
+
+    #[test]
+    fn test_array_count_overflow() {
+        // This test is primarily for 32-bit platforms, but good for completeness
+        #[cfg(target_pointer_width = "32")]
+        {
+            let data = vec![
+                b'T', b'S', b'B', b'I',  // TS:B:I (uint32 array)
+                0xFF, 0xFF, 0xFF, 0xFF,  // count = u32::MAX (overflows usize on 32-bit)
+            ];
+            let tags = Tags::from_raw(data);
+            let result = tags.iter();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("too large"));
+        }
+    }
+
+    #[test]
+    fn test_string_tag_missing_nul() {
+        let data = vec![
+            b'R', b'G', b'Z',  // RG:Z:...
+            b'r', b'g', b'0',  // "rg0" (no NUL terminator!)
+        ];
+        let tags = Tags::from_raw(data);
+        let result = tags.iter();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("null terminator"));
+    }
+
+    #[test]
+    fn test_truncated_array() {
+        let data = vec![
+            b'T', b'S', b'B', b'I',  // TS:B:I (int32 array)
+            0x03, 0x00, 0x00, 0x00,  // count = 3
+            0x01, 0x00, 0x00, 0x00,  // [0] = 1
+            0x02, 0x00, // [1] = incomplete! (only 2 bytes of 4)
+        ];
+        let tags = Tags::from_raw(data);
+        let result = tags.iter();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Insufficient"));
     }
 }
