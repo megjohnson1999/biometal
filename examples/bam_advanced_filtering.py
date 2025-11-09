@@ -15,8 +15,13 @@ Performance:
 - Constant ~5 MB memory footprint
 
 Requirements:
-- biometal-rs >= 1.2.0 (pip install biometal-rs)
+- biometal-rs >= 1.3.0 (pip install biometal-rs)
 - Python 3.9+
+
+New in v1.3.0:
+- CIGAR operations (alignment details)
+- SAM writing (BAM → SAM conversion)
+- CIGAR-aware coverage calculation
 """
 
 import biometal
@@ -381,7 +386,10 @@ def calculate_coverage(
     min_mapq: int = 20
 ) -> Dict[int, int]:
     """
-    Calculate per-base coverage for a region.
+    Calculate per-base coverage for a region using CIGAR operations.
+
+    Uses CIGAR strings to accurately determine which reference positions
+    are covered by each alignment (accounting for insertions, deletions, etc.).
 
     Args:
         bam_path: Path to BAM file
@@ -402,14 +410,18 @@ def calculate_coverage(
     region = Region(reference_id, start, end)
 
     for record in filter_by_region(bam_path, region, min_mapq=min_mapq):
-        # Count this read at its alignment position
-        # (Simplified - real coverage would use CIGAR)
+        # Use CIGAR operations for accurate coverage calculation
         pos = record.position
-        read_len = len(record.sequence)
 
-        for i in range(pos, min(pos + read_len, end)):
-            if i >= start:
-                coverage[i] += 1
+        for op in record.cigar:
+            # Only count operations that consume reference sequence
+            if op.consumes_reference():
+                for i in range(op.length):
+                    ref_pos = pos + i
+                    if start <= ref_pos < end:
+                        coverage[ref_pos] += 1
+                pos += op.length
+            # Insertions and clips don't advance reference position
 
     return dict(coverage)
 
@@ -474,6 +486,240 @@ def find_high_coverage_regions(
             region_positions = []
 
     return high_cov_regions
+
+
+# ============================================================================
+# CIGAR Operations (v1.3.0)
+# ============================================================================
+
+def analyze_cigar_operations(bam_path: str, limit: int = 1000) -> Dict[str, int]:
+    """
+    Analyze CIGAR operation distribution in alignments.
+
+    CIGAR operations describe how reads align to the reference:
+    - M: Match/mismatch
+    - I: Insertion
+    - D: Deletion
+    - N: Skipped reference (introns in RNA-seq)
+    - S: Soft clipping
+    - H: Hard clipping
+    - P: Padding
+    - =: Sequence match
+    - X: Sequence mismatch
+
+    Args:
+        bam_path: Path to BAM file
+        limit: Number of records to analyze
+
+    Returns:
+        Dictionary with operation counts
+
+    Examples:
+        >>> ops = analyze_cigar_operations("alignments.bam")
+        >>> print(f"Matches: {ops['M']}, Insertions: {ops['I']}, Deletions: {ops['D']}")
+    """
+    op_counts = defaultdict(int)
+    bam = biometal.BamReader.from_path(bam_path)
+
+    count = 0
+    for record in bam:
+        for op in record.cigar:
+            op_counts[op.op_char] += op.length
+
+        count += 1
+        if count >= limit:
+            break
+
+    return dict(op_counts)
+
+
+def find_indels(
+    bam_path: str,
+    reference_id: int,
+    min_indel_length: int = 3
+) -> List[Tuple[str, int, int, str]]:
+    """
+    Find insertions and deletions using CIGAR operations.
+
+    Args:
+        bam_path: Path to BAM file
+        reference_id: Reference sequence ID
+        min_indel_length: Minimum indel length to report
+
+    Returns:
+        List of (type, position, length, read_name) tuples
+
+    Examples:
+        >>> indels = find_indels("alignments.bam", 0, min_indel_length=5)
+        >>> for indel_type, pos, length, name in indels:
+        ...     print(f"{indel_type} at {pos}: {length}bp in {name}")
+    """
+    indels = []
+
+    criteria = FilterCriteria(
+        require_mapped=True,
+        require_primary=True,
+        allowed_references=[reference_id]
+    )
+
+    for record in filter_bam(bam_path, criteria):
+        pos = record.position
+
+        for op in record.cigar:
+            if op.is_insertion() and op.length >= min_indel_length:
+                indels.append(("INS", pos, op.length, record.name))
+            elif op.is_deletion() and op.length >= min_indel_length:
+                indels.append(("DEL", pos, op.length, record.name))
+
+            # Advance position for reference-consuming operations
+            if op.consumes_reference():
+                pos += op.length
+
+    return indels
+
+
+def calculate_alignment_metrics(record: biometal.BamRecord) -> Dict[str, int]:
+    """
+    Calculate alignment quality metrics from CIGAR operations.
+
+    Args:
+        record: BamRecord to analyze
+
+    Returns:
+        Dictionary with alignment metrics
+
+    Examples:
+        >>> reader = biometal.BamReader.from_path("alignments.bam")
+        >>> for record in reader:
+        ...     metrics = calculate_alignment_metrics(record)
+        ...     print(f"Matches: {metrics['matches']}, Indels: {metrics['indels']}")
+        ...     break
+    """
+    metrics = {
+        'matches': 0,
+        'insertions': 0,
+        'deletions': 0,
+        'soft_clips': 0,
+        'hard_clips': 0,
+        'indels': 0,
+        'query_length': record.query_length(),
+        'reference_length': record.reference_length(),
+    }
+
+    for op in record.cigar:
+        if op.is_match() or op.is_seq_match() or op.is_seq_mismatch():
+            metrics['matches'] += op.length
+        elif op.is_insertion():
+            metrics['insertions'] += op.length
+            metrics['indels'] += 1
+        elif op.is_deletion():
+            metrics['deletions'] += op.length
+            metrics['indels'] += 1
+        elif op.is_soft_clip():
+            metrics['soft_clips'] += op.length
+        elif op.is_hard_clip():
+            metrics['hard_clips'] += op.length
+
+    return metrics
+
+
+# ============================================================================
+# SAM Writing (v1.3.0)
+# ============================================================================
+
+def convert_bam_to_sam(
+    bam_path: str,
+    sam_path: str,
+    criteria: Optional[FilterCriteria] = None,
+    limit: Optional[int] = None
+) -> int:
+    """
+    Convert BAM to SAM format with optional filtering.
+
+    Args:
+        bam_path: Input BAM file path
+        sam_path: Output SAM file path
+        criteria: Optional filter criteria
+        limit: Optional limit on records to convert
+
+    Returns:
+        Number of records written
+
+    Examples:
+        >>> # Convert entire file
+        >>> count = convert_bam_to_sam("input.bam", "output.sam")
+        >>> print(f"Converted {count} records")
+
+        >>> # Convert only high-quality alignments
+        >>> criteria = FilterCriteria(min_mapq=30, require_primary=True)
+        >>> count = convert_bam_to_sam("input.bam", "filtered.sam", criteria)
+    """
+    reader = biometal.BamReader.from_path(bam_path)
+    writer = biometal.SamWriter.create(sam_path)
+
+    # Write header
+    writer.write_header(reader.header)
+
+    # Write records
+    count = 0
+    for record in reader:
+        # Apply filter if specified
+        if criteria is not None and not criteria.passes(record):
+            continue
+
+        writer.write_record(record)
+        count += 1
+
+        if limit is not None and count >= limit:
+            break
+
+    writer.close()
+    return count
+
+
+def extract_region_to_sam(
+    bam_path: str,
+    sam_path: str,
+    reference_id: int,
+    start: int,
+    end: int,
+    min_mapq: int = 20
+) -> int:
+    """
+    Extract a genomic region to SAM format.
+
+    Args:
+        bam_path: Input BAM file path
+        sam_path: Output SAM file path
+        reference_id: Reference sequence ID
+        start: Start position (0-based, inclusive)
+        end: End position (0-based, exclusive)
+        min_mapq: Minimum mapping quality
+
+    Returns:
+        Number of records written
+
+    Examples:
+        >>> # Extract chr1:1000-2000 to SAM
+        >>> count = extract_region_to_sam("alignments.bam", "region.sam", 0, 1000, 2000)
+        >>> print(f"Extracted {count} alignments to region.sam")
+    """
+    reader = biometal.BamReader.from_path(bam_path)
+    writer = biometal.SamWriter.create(sam_path)
+
+    # Write header
+    writer.write_header(reader.header)
+
+    # Write filtered records
+    region = Region(reference_id, start, end)
+    count = 0
+
+    for record in filter_by_region(bam_path, region, min_mapq=min_mapq):
+        writer.write_record(record)
+        count += 1
+
+    writer.close()
+    return count
 
 
 # ============================================================================
@@ -640,8 +886,37 @@ def main():
         print(f"   MAPQ {mapq}: {count:,} alignments")
     print()
 
+    # Example 6: CIGAR operation analysis (v1.3.0)
+    print("6. CIGAR Operation Analysis (first 1K records):")
+    ops = analyze_cigar_operations(bam_path, limit=1000)
+    for op_char in sorted(ops.keys()):
+        count = ops[op_char]
+        print(f"   {op_char}: {count:,} bases")
+    print()
+
+    # Example 7: Indel detection (v1.3.0)
+    print("7. Indel Detection (≥5bp, reference 0, first 1K records):")
+    indels = find_indels(bam_path, reference_id=0, min_indel_length=5)[:10]
+    if indels:
+        for indel_type, pos, length, name in indels[:5]:  # Show first 5
+            print(f"   {indel_type} at {pos}: {length}bp ({name})")
+    else:
+        print("   No indels ≥5bp found")
+    print()
+
+    # Example 8: SAM writing (v1.3.0)
+    print("8. SAM Writing (extract region to SAM):")
+    sam_path = "region_sample.sam"
+    sam_count = extract_region_to_sam(bam_path, sam_path, 0, 0, 1000, min_mapq=20)
+    print(f"   Wrote {sam_count:,} alignments to {sam_path}")
+    print()
+
     print(f"{'=' * 60}")
     print("✅ Analysis complete")
+    print(f"\n💡 New in v1.3.0:")
+    print(f"   - CIGAR operations for detailed alignment analysis")
+    print(f"   - SAM writing for format conversion and region extraction")
+    print(f"   - CIGAR-aware coverage calculation")
     print(f"\n💡 Tip: Modify criteria objects to customize filters")
     print(f"   Performance: 4.54M records/sec, constant ~5 MB memory")
 

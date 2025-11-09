@@ -75,7 +75,7 @@
 //! ```no_run
 //! use biometal::io::bam::BamReader;
 //!
-//! # fn main() -> std::io::Result<()> {
+//! # fn main() -> biometal::Result<()> {
 //! // Convenience method
 //! let mut bam = BamReader::from_path("alignments.bam")?;
 //!

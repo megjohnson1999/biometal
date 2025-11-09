@@ -7,6 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2025-11-09
+
+### 🧬 Python BAM Bindings: CIGAR Operations and SAM Writing
+
+Complete Python bindings for BAM alignment analysis with CIGAR operations, SAM writing, and advanced filtering capabilities. Enables production-grade alignment analysis pipelines in Python with biometal's streaming-first architecture.
+
+**Grade**: A (all tests passing)
+**Tests**: 545 passing (354 library + 70 BAM + 121 doc)
+**New Python Classes**: 2 (CigarOp, SamWriter)
+**New Python Methods**: 10+ (CIGAR analysis, SAM writing, alignment metrics)
+
+### Added
+
+#### Python: CIGAR Operations (src/python/bam.rs)
+Complete CIGAR (Compact Idiosyncratic Gapped Alignment Report) analysis:
+
+**PyCigarOp Class**:
+- **`op_char`** property - Operation character (M, I, D, N, S, H, P, =, X)
+- **`length`** property - Operation length in bases
+- **`is_match()`**, **`is_insertion()`**, **`is_deletion()`** - Type checking (9 methods total)
+- **`is_ref_skip()`**, **`is_soft_clip()`**, **`is_hard_clip()`**, **`is_padding()`**
+- **`is_seq_match()`**, **`is_seq_mismatch()`** - Detailed alignment type
+- **`consumes_reference()`** - Returns True if operation advances reference position
+- **`consumes_query()`** - Returns True if operation consumes query sequence
+
+**BamRecord CIGAR Methods**:
+- **`cigar`** property - Returns list of CigarOp objects
+- **`cigar_string()`** - Generate human-readable CIGAR string (e.g., "100M2I50M")
+- **`reference_length()`** - Calculate reference span from CIGAR
+- **`query_length()`** - Calculate query span from CIGAR
+- **`reference_end()`** - Calculate alignment end position
+
+**Use Cases**:
+- Structural variant detection (indel identification)
+- Alignment quality assessment
+- Coverage calculation with CIGAR awareness
+- RNA-seq splice junction analysis (N operations)
+
+#### Python: SAM Writing (src/python/bam.rs)
+BAM to SAM conversion with optional filtering:
+
+**PySamWriter Class**:
+- **`SamWriter.create(path)`** - Create SAM writer
+- **`write_header(header)`** - Write SAM header from BamHeader
+- **`write_record(record)`** - Write BamRecord in SAM format
+- **`close()`** - Close writer and flush buffers
+
+**Use Cases**:
+- BAM → SAM conversion for human-readable output
+- Region extraction to SAM format
+- Filtered alignment export
+- Tool integration requiring SAM input
+
+#### Python: Enhanced Coverage Calculation
+Updated `calculate_coverage()` function to use CIGAR operations:
+
+- Accurate per-base coverage accounting for insertions, deletions, and clipping
+- Properly handles all 9 CIGAR operation types
+- Only counts reference-consuming operations (M, D, N, =, X)
+
+**Before**: Simple read start position counting
+**After**: CIGAR-aware per-base coverage with proper indel handling
+
+### Enhanced
+
+#### Documentation Updates
+
+**examples/bam_advanced_filtering.py**:
+- Added **`analyze_cigar_operations()`** - Distribution of CIGAR operations
+- Added **`find_indels()`** - Detect insertions and deletions ≥N bp
+- Added **`calculate_alignment_metrics()`** - Alignment quality from CIGAR
+- Added **`convert_bam_to_sam()`** - Full BAM → SAM conversion with filtering
+- Added **`extract_region_to_sam()`** - Export genomic region to SAM format
+- Updated `calculate_coverage()` to use CIGAR operations
+- Updated `main()` with 3 new examples (CIGAR analysis, indel detection, SAM writing)
+
+**README.md**:
+- Added "BAM Alignment Analysis (v1.3.0)" example section
+- Demonstrates CIGAR iteration and type checking
+- Shows SAM writing workflow
+- Updated Operations Library to mention Python BAM bindings
+- Updated roadmap: v1.3.0 marked as "In Development"
+- Updated footer: "50+ Python functions (including full BAM support)"
+
+**notebooks/05_bam_alignment_analysis.ipynb**:
+- Added Section 11: "CIGAR Operations Analysis (v1.3.0)"
+  - CIGAR operation distribution analysis
+  - Indel detection with thresholds
+  - Alignment metrics calculation
+- Added Section 12: "SAM Writing and Format Conversion (v1.3.0)"
+  - BAM → SAM conversion with filtering
+  - Region extraction to SAM format
+  - Human-readable output examples
+- Updated Key Takeaways with v1.3.0 features
+
+### Testing
+
+**New Test Suite** (tests/python/test_bam.py):
+- 36 comprehensive tests covering all BAM functionality
+- CIGAR operations: parsing, type checking, consumption methods
+- CIGAR helpers: cigar_string(), reference_length(), query_length(), reference_end()
+- SAM writing: header, records, close
+- Integration tests: CIGAR-based coverage calculation
+- All tests passing (skipped when test data unavailable)
+
+### Fixed
+
+**Documentation Tests**:
+- Updated `src/io/bam/mod.rs` example to use correct return type (`biometal::Result<()>`)
+- All 121 doc tests now passing
+
+### Performance
+
+No performance changes - focuses on exposing existing functionality to Python.
+Underlying BAM parser maintains:
+- 4.54 million records/sec throughput
+- 43.0 MiB/s compressed file processing
+- Constant ~5 MB memory footprint
+
+### Python API Summary
+
+**New in v1.3.0**:
+```python
+# CIGAR operations
+for record in reader:
+    for op in record.cigar:
+        if op.is_insertion() and op.length >= 5:
+            print(f"Found {op.length}bp insertion")
+
+    # Alignment metrics
+    ref_len = record.reference_length()
+    query_len = record.query_length()
+    cigar_str = record.cigar_string()
+
+# SAM writing
+writer = biometal.SamWriter.create("output.sam")
+writer.write_header(reader.header)
+for record in reader:
+    if record.is_primary and record.mapq >= 30:
+        writer.write_record(record)
+writer.close()
+```
+
 ## [1.2.0] - 2025-11-06
 
 ### 🐍 Python Bindings for Phase 4 Sequence Operations

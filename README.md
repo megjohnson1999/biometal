@@ -132,6 +132,7 @@ Learn biometal through hands-on Jupyter notebooks (5 complete, ~2.5 hours):
   - 4.54 million records/sec throughput
   - 43.0 MiB/s compressed file processing
   - Constant ~5 MB memory (streams terabyte-scale alignments)
+  - **Python bindings (v1.3.0)**: CIGAR operations, SAM writing, alignment metrics
 - **40+ Python functions** for bioinformatics workflows
 
 ---
@@ -183,11 +184,12 @@ biometal's design is grounded in comprehensive experimental validation:
 **v1.2.0** (Released Nov 6, 2025) ✅ - Python bindings for Phase 4 QC
 **BAM/SAM** (Integrated Nov 8, 2025) ✅ - Native streaming alignment parser with parallel BGZF (4× speedup)
 
+**v1.3.0** (In Development) - Python BAM bindings with CIGAR operations and SAM writing
+
 **Next** (Planned):
-- Python BAM bindings (expose BAM parser to Python)
-- Region queries and filtering (chr:start-end, MAPQ, flags)
-- Complete tag parsing (deferred from Phase 1)
+- Complete tag parsing (extended types from Phase 1)
 - BAI/CSI index support (random access)
+- Additional alignment statistics
 
 **Future** (Community Driven):
 - Extended operations (alignment, assembly)
@@ -269,6 +271,39 @@ for record in stream:
     gc = biometal.gc_content(record.sequence)
 ```
 
+### BAM Alignment Analysis (v1.3.0)
+
+```python
+import biometal
+
+# Stream BAM file with constant memory
+reader = biometal.BamReader.from_path("alignments.bam")
+
+for record in reader:
+    # Access alignment details
+    print(f"{record.name}: MAPQ={record.mapq}, pos={record.position}")
+
+    # Analyze CIGAR operations
+    for op in record.cigar:
+        if op.is_insertion() and op.length >= 5:
+            print(f"  Found {op.length}bp insertion")
+
+    # Calculate alignment metrics
+    ref_len = record.reference_length()
+    query_len = record.query_length()
+    print(f"  Reference: {ref_len}bp, Query: {query_len}bp")
+
+# Convert BAM to SAM with filtering
+writer = biometal.SamWriter.create("output.sam")
+writer.write_header(reader.header)
+
+for record in reader:
+    if record.is_primary and record.mapq >= 30:
+        writer.write_record(record)
+
+writer.close()
+```
+
 ---
 
 ## FAQ
@@ -335,10 +370,10 @@ For the experimental methodology:
 ---
 
 <p align="center">
-<strong>Status:</strong> v1.2.0 + Production BAM/SAM Parser 🚀<br>
-<strong>Latest:</strong> BAM/SAM with 4× speedup (parallel BGZF) - November 8, 2025<br>
+<strong>Status:</strong> v1.3.0 in development 🚧<br>
+<strong>Latest:</strong> Python BAM bindings with CIGAR operations and SAM writing<br>
 <strong>Tests:</strong> 424 passing (354 library + 70 BAM parser)<br>
 <strong>Performance:</strong> 4.54M records/sec, 43.0 MiB/s throughput<br>
-<strong>Python Functions:</strong> 40+ (BAM bindings coming soon)<br>
+<strong>Python Functions:</strong> 50+ (including full BAM support)<br>
 <strong>Evidence Base:</strong> 1,357 experiments, 40,710 measurements
 </p>

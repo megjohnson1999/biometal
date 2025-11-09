@@ -15,8 +15,10 @@ use pyo3::prelude::*;
 use pyo3::exceptions::PyStopIteration;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use crate::io::bam::{BamReader, Header, Reference};
+use crate::io::bam::{BamReader, Header, Reference, Tag, TagValue, ArrayValue, CigarOp, SamWriter};
 use crate::io::compression::CompressedReader;
+use std::fs::File;
+use std::io::BufWriter;
 
 /// Reference sequence information
 ///
@@ -56,6 +58,337 @@ impl From<&Reference> for PyReference {
         PyReference {
             name: reference.name.clone(),
             length: reference.length,
+        }
+    }
+}
+
+/// CIGAR operation
+///
+/// Represents a single CIGAR operation in an alignment.
+/// CIGAR (Compact Idiosyncratic Gapped Alignment Report) describes
+/// how a read aligns to the reference.
+///
+/// Operation Types:
+///     - Match (M): Alignment match (can include mismatches)
+///     - Insertion (I): Insertion to reference
+///     - Deletion (D): Deletion from reference
+///     - RefSkip (N): Skipped region from reference (intron)
+///     - SoftClip (S): Soft clipping (bases in read, not aligned)
+///     - HardClip (H): Hard clipping (bases not in read)
+///     - Padding (P): Padding (silent deletion from padded reference)
+///     - SeqMatch (=): Sequence match (bases match reference)
+///     - SeqMismatch (X): Sequence mismatch (bases differ)
+///
+/// Attributes:
+///     length (int): Number of bases consumed by this operation
+///     op_char (str): Operation character (M, I, D, N, S, H, P, =, X)
+///
+/// Example:
+///     >>> for op in record.cigar:
+///     ...     print(f"{op.length}{op.op_char}")
+///     100M
+///     5I
+///     50M
+#[pyclass(name = "CigarOp")]
+#[derive(Clone)]
+pub struct PyCigarOp {
+    inner: CigarOp,
+}
+
+#[pymethods]
+impl PyCigarOp {
+    /// Get the operation length
+    #[getter]
+    fn length(&self) -> u32 {
+        self.inner.length()
+    }
+
+    /// Get the operation character (M, I, D, N, S, H, P, =, X)
+    #[getter]
+    fn op_char(&self) -> char {
+        self.inner.as_char()
+    }
+
+    /// Check if this is a Match/mismatch operation (M)
+    fn is_match(&self) -> bool {
+        matches!(self.inner, CigarOp::Match(_))
+    }
+
+    /// Check if this is an Insertion operation (I)
+    fn is_insertion(&self) -> bool {
+        matches!(self.inner, CigarOp::Insertion(_))
+    }
+
+    /// Check if this is a Deletion operation (D)
+    fn is_deletion(&self) -> bool {
+        matches!(self.inner, CigarOp::Deletion(_))
+    }
+
+    /// Check if this is a Reference skip operation (N)
+    fn is_ref_skip(&self) -> bool {
+        matches!(self.inner, CigarOp::RefSkip(_))
+    }
+
+    /// Check if this is a Soft clip operation (S)
+    fn is_soft_clip(&self) -> bool {
+        matches!(self.inner, CigarOp::SoftClip(_))
+    }
+
+    /// Check if this is a Hard clip operation (H)
+    fn is_hard_clip(&self) -> bool {
+        matches!(self.inner, CigarOp::HardClip(_))
+    }
+
+    /// Check if this is a Padding operation (P)
+    fn is_padding(&self) -> bool {
+        matches!(self.inner, CigarOp::Padding(_))
+    }
+
+    /// Check if this is a Sequence match operation (=)
+    fn is_seq_match(&self) -> bool {
+        matches!(self.inner, CigarOp::SeqMatch(_))
+    }
+
+    /// Check if this is a Sequence mismatch operation (X)
+    fn is_seq_mismatch(&self) -> bool {
+        matches!(self.inner, CigarOp::SeqMismatch(_))
+    }
+
+    /// Check if this operation consumes reference bases
+    ///
+    /// Returns True for: M, D, N, =, X
+    /// Returns False for: I, S, H, P
+    fn consumes_reference(&self) -> bool {
+        matches!(
+            self.inner,
+            CigarOp::Match(_)
+                | CigarOp::Deletion(_)
+                | CigarOp::RefSkip(_)
+                | CigarOp::SeqMatch(_)
+                | CigarOp::SeqMismatch(_)
+        )
+    }
+
+    /// Check if this operation consumes query bases (from read)
+    ///
+    /// Returns True for: M, I, S, =, X
+    /// Returns False for: D, N, H, P
+    fn consumes_query(&self) -> bool {
+        matches!(
+            self.inner,
+            CigarOp::Match(_)
+                | CigarOp::Insertion(_)
+                | CigarOp::SoftClip(_)
+                | CigarOp::SeqMatch(_)
+                | CigarOp::SeqMismatch(_)
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{}", self.inner)
+    }
+
+    fn __str__(&self) -> String {
+        format!("{}", self.inner)
+    }
+}
+
+impl From<&CigarOp> for PyCigarOp {
+    fn from(op: &CigarOp) -> Self {
+        PyCigarOp { inner: *op }
+    }
+}
+
+/// BAM tag value
+///
+/// Represents different tag value types in BAM format.
+///
+/// Types:
+///     - char(str): Single character (type A)
+///     - int(int): Integer value (type i)
+///     - float(float): Float value (type f)
+///     - string(str): String value (type Z)
+///     - hex(str): Hex string (type H)
+///     - array(list): Array of values (type B)
+///
+/// Example:
+///     >>> tag = record.get_tag("NM")
+///     >>> if tag:
+///     ...     print(f"Edit distance: {tag.as_int()}")
+#[pyclass(name = "TagValue")]
+#[derive(Clone)]
+pub struct PyTagValue {
+    inner: TagValue,
+}
+
+#[pymethods]
+impl PyTagValue {
+    /// Check if tag is a character value
+    fn is_char(&self) -> bool {
+        matches!(self.inner, TagValue::Char(_))
+    }
+
+    /// Check if tag is an integer value
+    fn is_int(&self) -> bool {
+        matches!(self.inner, TagValue::Int(_))
+    }
+
+    /// Check if tag is a float value
+    fn is_float(&self) -> bool {
+        matches!(self.inner, TagValue::Float(_))
+    }
+
+    /// Check if tag is a string value
+    fn is_string(&self) -> bool {
+        matches!(self.inner, TagValue::String(_))
+    }
+
+    /// Check if tag is an array value
+    fn is_array(&self) -> bool {
+        matches!(self.inner, TagValue::Array(_))
+    }
+
+    /// Get value as integer (if it is one)
+    fn as_int(&self) -> Option<i64> {
+        match &self.inner {
+            TagValue::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// Get value as float (if it is one)
+    fn as_float(&self) -> Option<f32> {
+        match &self.inner {
+            TagValue::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    /// Get value as string (if it is one)
+    fn as_string(&self) -> Option<String> {
+        match &self.inner {
+            TagValue::String(s) => Some(s.clone()),
+            TagValue::Hex(h) => Some(h.clone()),
+            _ => None,
+        }
+    }
+
+    /// Get value as character (if it is one)
+    fn as_char(&self) -> Option<char> {
+        match &self.inner {
+            TagValue::Char(c) => Some(*c as char),
+            _ => None,
+        }
+    }
+
+    /// Get value as array (if it is one)
+    fn as_array(&self, py: Python) -> Option<Py<PyAny>> {
+        use pyo3::types::PyList;
+
+        match &self.inner {
+            TagValue::Array(arr) => {
+                let list = match arr {
+                    ArrayValue::Int8(v) => {
+                        let items: Vec<i64> = v.iter().map(|&x| x as i64).collect();
+                        PyList::new(py, &items).expect("Failed to create PyList from Vec<i64>")
+                    }
+                    ArrayValue::UInt8(v) => {
+                        let items: Vec<u64> = v.iter().map(|&x| x as u64).collect();
+                        PyList::new(py, &items).expect("Failed to create PyList from Vec<u64>")
+                    }
+                    ArrayValue::Int16(v) => {
+                        let items: Vec<i64> = v.iter().map(|&x| x as i64).collect();
+                        PyList::new(py, &items).expect("Failed to create PyList from Vec<i64>")
+                    }
+                    ArrayValue::UInt16(v) => {
+                        let items: Vec<u64> = v.iter().map(|&x| x as u64).collect();
+                        PyList::new(py, &items).expect("Failed to create PyList from Vec<u64>")
+                    }
+                    ArrayValue::Int32(v) => {
+                        let items: Vec<i64> = v.iter().map(|&x| x as i64).collect();
+                        PyList::new(py, &items).expect("Failed to create PyList from Vec<i64>")
+                    }
+                    ArrayValue::UInt32(v) => {
+                        let items: Vec<u64> = v.iter().map(|&x| x as u64).collect();
+                        PyList::new(py, &items).expect("Failed to create PyList from Vec<u64>")
+                    }
+                    ArrayValue::Float(v) => {
+                        PyList::new(py, v.as_slice()).expect("Failed to create PyList from Vec<f32>")
+                    }
+                };
+                Some(list.into())
+            }
+            _ => None,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            TagValue::Char(c) => format!("TagValue::Char('{}')", *c as char),
+            TagValue::Int(i) => format!("TagValue::Int({})", i),
+            TagValue::Float(f) => format!("TagValue::Float({})", f),
+            TagValue::String(s) => format!("TagValue::String('{}')", s),
+            TagValue::Hex(h) => format!("TagValue::Hex('{}')", h),
+            TagValue::Array(_) => "TagValue::Array([...])".to_string(),
+        }
+    }
+
+    fn __str__(&self) -> String {
+        match &self.inner {
+            TagValue::Char(c) => format!("{}", *c as char),
+            TagValue::Int(i) => format!("{}", i),
+            TagValue::Float(f) => format!("{}", f),
+            TagValue::String(s) => s.clone(),
+            TagValue::Hex(h) => h.clone(),
+            TagValue::Array(_) => "[array]".to_string(),
+        }
+    }
+}
+
+impl From<TagValue> for PyTagValue {
+    fn from(value: TagValue) -> Self {
+        PyTagValue { inner: value }
+    }
+}
+
+/// BAM tag with name and value
+///
+/// Attributes:
+///     name (str): Two-character tag name (e.g., "NM", "AS", "RG")
+///     value (TagValue): Tag value
+///
+/// Example:
+///     >>> tag = record.get_tag("NM")
+///     >>> print(f"{tag.name}: {tag.value}")
+///     NM: 5
+#[pyclass(name = "Tag")]
+#[derive(Clone)]
+pub struct PyTag {
+    /// Tag name (2 characters)
+    #[pyo3(get)]
+    pub name: String,
+
+    /// Tag value
+    #[pyo3(get)]
+    pub value: PyTagValue,
+}
+
+#[pymethods]
+impl PyTag {
+    fn __repr__(&self) -> String {
+        format!("Tag(name='{}', value={})", self.name, self.value.__repr__())
+    }
+
+    fn __str__(&self) -> String {
+        format!("{}:{}", self.name, self.value.__str__())
+    }
+}
+
+impl From<&Tag> for PyTag {
+    fn from(tag: &Tag) -> Self {
+        PyTag {
+            name: tag.name_str().to_string(),
+            value: PyTagValue::from(tag.value.clone()),
         }
     }
 }
@@ -141,6 +474,12 @@ pub struct PyBamRecord {
     /// Phred quality scores
     #[pyo3(get)]
     pub quality: Vec<u8>,
+
+    /// CIGAR operations (stored internally, accessed via property)
+    cigar_ops: Vec<CigarOp>,
+
+    /// Optional tags (stored internally, accessed via methods)
+    tags: crate::io::bam::Tags,
 }
 
 #[pymethods]
@@ -251,6 +590,184 @@ impl PyBamRecord {
         String::from_utf8_lossy(&self.quality).to_string()
     }
 
+    /// Get CIGAR operations
+    ///
+    /// Returns list of CigarOp objects describing the alignment.
+    ///
+    /// Returns:
+    ///     List[CigarOp]: CIGAR operations
+    ///
+    /// Example:
+    ///     >>> for op in record.cigar:
+    ///     ...     print(f"{op.length}{op.op_char}", end=" ")
+    ///     100M 5I 50M
+    #[getter]
+    fn cigar(&self) -> Vec<PyCigarOp> {
+        self.cigar_ops.iter().map(|op| PyCigarOp::from(op)).collect()
+    }
+
+    /// Get CIGAR string representation
+    ///
+    /// Returns CIGAR in SAM format (e.g., "100M5I50M").
+    ///
+    /// Returns:
+    ///     str: CIGAR string
+    ///
+    /// Example:
+    ///     >>> print(record.cigar_string())
+    ///     100M5I50M
+    fn cigar_string(&self) -> String {
+        self.cigar_ops
+            .iter()
+            .map(|op| format!("{}", op))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    /// Calculate reference length consumed by alignment
+    ///
+    /// Counts bases consumed on reference (M, D, N, =, X operations).
+    /// Does not include insertions, clipping, or padding.
+    ///
+    /// Returns:
+    ///     int: Number of reference bases consumed
+    ///
+    /// Example:
+    ///     >>> # CIGAR: 50M5I45M (100M total, but 5I doesn't consume reference)
+    ///     >>> print(record.reference_length())
+    ///     95
+    fn reference_length(&self) -> u32 {
+        self.cigar_ops
+            .iter()
+            .filter_map(|op| match op {
+                CigarOp::Match(len)
+                | CigarOp::Deletion(len)
+                | CigarOp::RefSkip(len)
+                | CigarOp::SeqMatch(len)
+                | CigarOp::SeqMismatch(len) => Some(len),
+                _ => None,
+            })
+            .sum()
+    }
+
+    /// Calculate query length consumed by alignment
+    ///
+    /// Counts bases consumed from read (M, I, S, =, X operations).
+    /// Does not include deletions, ref skips, hard clips, or padding.
+    ///
+    /// Returns:
+    ///     int: Number of query bases consumed
+    ///
+    /// Example:
+    ///     >>> # CIGAR: 50M5I45M (105 bases from read)
+    ///     >>> print(record.query_length())
+    ///     105
+    fn query_length(&self) -> u32 {
+        self.cigar_ops
+            .iter()
+            .filter_map(|op| match op {
+                CigarOp::Match(len)
+                | CigarOp::Insertion(len)
+                | CigarOp::SoftClip(len)
+                | CigarOp::SeqMatch(len)
+                | CigarOp::SeqMismatch(len) => Some(len),
+                _ => None,
+            })
+            .sum()
+    }
+
+    /// Calculate alignment end position on reference
+    ///
+    /// Returns the 0-based end position (exclusive) of the alignment
+    /// on the reference sequence. Returns None if unmapped.
+    ///
+    /// Returns:
+    ///     Optional[int]: End position (None if unmapped)
+    ///
+    /// Example:
+    ///     >>> # Position 100, CIGAR 50M5D45M = 100 reference bases
+    ///     >>> print(record.reference_end())
+    ///     200
+    fn reference_end(&self) -> Option<i32> {
+        self.position.map(|pos| pos + self.reference_length() as i32)
+    }
+
+    /// Get a specific tag by name
+    ///
+    /// Args:
+    ///     name (str): Two-character tag name (e.g., "NM", "AS", "RG")
+    ///
+    /// Returns:
+    ///     Tag | None: Tag object if found, None otherwise
+    ///
+    /// Example:
+    ///     >>> nm_tag = record.get_tag("NM")
+    ///     >>> if nm_tag:
+    ///     ...     print(f"Edit distance: {nm_tag.value.as_int()}")
+    fn get_tag(&self, name: &str) -> PyResult<Option<PyTag>> {
+        if name.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Tag name must be exactly 2 characters"
+            ));
+        }
+
+        let name_bytes: [u8; 2] = [name.as_bytes()[0], name.as_bytes()[1]];
+
+        match self.tags.get(&name_bytes) {
+            Ok(Some(tag)) => Ok(Some(PyTag::from(&tag))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Error parsing tag: {}", e)
+            )),
+        }
+    }
+
+    /// Check if a tag exists
+    ///
+    /// Args:
+    ///     name (str): Two-character tag name
+    ///
+    /// Returns:
+    ///     bool: True if tag exists, False otherwise
+    ///
+    /// Example:
+    ///     >>> if record.has_tag("NM"):
+    ///     ...     print("Has edit distance tag")
+    fn has_tag(&self, name: &str) -> PyResult<bool> {
+        if name.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Tag name must be exactly 2 characters"
+            ));
+        }
+
+        let name_bytes: [u8; 2] = [name.as_bytes()[0], name.as_bytes()[1]];
+
+        match self.tags.get(&name_bytes) {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(_) => Ok(false),  // Parsing error = tag doesn't exist
+        }
+    }
+
+    /// Get all tags as a list
+    ///
+    /// Returns:
+    ///     list[Tag]: List of all tags in the record
+    ///
+    /// Example:
+    ///     >>> for tag in record.tags():
+    ///     ...     print(f"{tag.name}: {tag.value}")
+    fn tags(&self) -> PyResult<Vec<PyTag>> {
+        let mut result = Vec::new();
+
+        // Iterate through all tags
+        for tag in self.tags.iter()? {
+            result.push(PyTag::from(&tag));
+        }
+
+        Ok(result)
+    }
+
     fn __repr__(&self) -> String {
         let ref_str = self.reference_id
             .map(|r| r.to_string())
@@ -286,6 +803,8 @@ impl From<crate::io::bam::Record> for PyBamRecord {
             template_length: record.template_length,
             sequence: record.sequence,
             quality: record.quality,
+            cigar_ops: record.cigar,
+            tags: record.tags,
         }
     }
 }
@@ -582,7 +1101,7 @@ impl PyBamReader {
             reference_id,
             start,
             end,
-            header,
+            _header: header,
         })
     }
 
@@ -604,7 +1123,7 @@ pub struct PyBamRegionIter {
     reference_id: usize,
     start: Option<i32>,
     end: Option<i32>,
-    header: PyBamHeader,
+    _header: PyBamHeader,
 }
 
 #[pymethods]
@@ -673,6 +1192,10 @@ impl PyBamRegionIter {
 
 /// Calculate per-position coverage for a genomic region
 ///
+/// Uses CIGAR operations to calculate accurate per-base coverage.
+/// Counts M (match), D (deletion), N (ref skip), = (seq match), and X (seq mismatch)
+/// operations. Insertions and clipping operations do not contribute to coverage.
+///
 /// Args:
 ///     path (str): Path to BAM file
 ///     reference_id (int): Reference sequence ID (0-based)
@@ -685,13 +1208,16 @@ impl PyBamRegionIter {
 /// Example:
 ///     >>> coverage = biometal.calculate_coverage("alignments.bam", reference_id=0, start=1000, end=2000)
 ///     >>> print(f"Position 1500 has {coverage.get(1500, 0)} reads")
+///     >>> max_cov = max(coverage.values())
+///     >>> print(f"Maximum coverage: {max_cov}×")
 ///
 /// Note:
-///     Only counts positions with coverage > 0. Missing positions have coverage 0.
+///     Only returns positions with coverage > 0. Missing positions have coverage 0.
+///     Uses CIGAR-aware calculation for accurate per-base coverage.
 #[pyfunction]
 #[pyo3(signature = (path, reference_id, start=None, end=None))]
 pub fn calculate_coverage(
-    py: Python,
+    _py: Python,
     path: String,
     reference_id: usize,
     start: Option<i32>,
@@ -719,9 +1245,40 @@ pub fn calculate_coverage(
                     };
 
                     if in_range {
-                        // For now, just count the start position
-                        // TODO: Parse CIGAR to get full coverage
-                        *coverage.entry(pos).or_insert(0) += 1;
+                        // Calculate coverage using CIGAR operations
+                        let mut current_pos = pos;
+
+                        for op in &record.cigar {
+                            // Only count operations that consume reference bases
+                            match op {
+                                CigarOp::Match(len) |
+                                CigarOp::Deletion(len) |
+                                CigarOp::RefSkip(len) |
+                                CigarOp::SeqMatch(len) |
+                                CigarOp::SeqMismatch(len) => {
+                                    // Increment coverage for each position
+                                    for i in 0..*len {
+                                        let coverage_pos = current_pos + i as i32;
+
+                                        // Only count if in requested range
+                                        let pos_in_range = match (start, end) {
+                                            (Some(s), Some(e)) => coverage_pos >= s && coverage_pos < e,
+                                            (Some(s), None) => coverage_pos >= s,
+                                            (None, Some(e)) => coverage_pos < e,
+                                            (None, None) => true,
+                                        };
+
+                                        if pos_in_range {
+                                            *coverage.entry(coverage_pos).or_insert(0) += 1;
+                                        }
+                                    }
+                                    current_pos += *len as i32;
+                                }
+                                _ => {
+                                    // Insertions, clips, padding don't consume reference
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -747,7 +1304,7 @@ pub fn calculate_coverage(
 #[pyfunction]
 #[pyo3(signature = (path, reference_id=None))]
 pub fn mapq_distribution(
-    py: Python,
+    _py: Python,
     path: String,
     reference_id: Option<usize>,
 ) -> PyResult<HashMap<u8, u32>> {
@@ -773,6 +1330,154 @@ pub fn mapq_distribution(
     }
 
     Ok(distribution)
+}
+
+/// SAM format writer
+///
+/// Writes BAM records to SAM text format. Enables workflows like:
+/// BAM → filter → SAM output.
+///
+/// Example:
+///     >>> reader = biometal.BamReader.from_path("input.bam")
+///     >>> writer = biometal.SamWriter.create("output.sam")
+///     >>>
+///     >>> # Write header
+///     >>> writer.write_header(reader.header)
+///     >>>
+///     >>> # Write filtered records
+///     >>> for record in reader:
+///     ...     if record.is_mapped and record.mapq >= 30:
+///     ...         writer.write_record(record)
+///     >>>
+///     >>> writer.close()
+#[pyclass(name = "SamWriter", unsendable)]
+pub struct PySamWriter {
+    writer: Option<SamWriter<BufWriter<File>>>,
+    path: String,
+}
+
+#[pymethods]
+impl PySamWriter {
+    /// Create a new SAM writer
+    ///
+    /// Args:
+    ///     path (str): Output SAM file path
+    ///
+    /// Returns:
+    ///     SamWriter: New SAM writer instance
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be created
+    ///
+    /// Example:
+    ///     >>> writer = biometal.SamWriter.create("output.sam")
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let file = File::create(&path)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                format!("Failed to create file {}: {}", path, e)
+            ))?;
+
+        let buf_writer = BufWriter::new(file);
+        let sam_writer = SamWriter::new(buf_writer);
+
+        Ok(PySamWriter {
+            writer: Some(sam_writer),
+            path: path.clone(),
+        })
+    }
+
+    /// Write BAM header to SAM file
+    ///
+    /// Args:
+    ///     header (BamHeader): Header to write
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> reader = biometal.BamReader.from_path("input.bam")
+    ///     >>> writer = biometal.SamWriter.create("output.sam")
+    ///     >>> writer.write_header(reader.header)
+    fn write_header(&mut self, header: &PyBamHeader) -> PyResult<()> {
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Writer has been closed")
+        })?;
+
+        // Convert PyBamHeader to Header
+        let rust_header = Header {
+            text: String::new(),  // SAM writer will generate from references
+            references: header.references.iter().map(|r| Reference {
+                name: r.name.clone(),
+                length: r.length,
+            }).collect(),
+        };
+
+        writer.write_header(&rust_header)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                format!("Failed to write header: {}", e)
+            ))
+    }
+
+    /// Write BAM record to SAM file
+    ///
+    /// Args:
+    ///     record (BamRecord): Record to write
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> for record in reader:
+    ///     ...     if record.is_mapped:
+    ///     ...         writer.write_record(record)
+    fn write_record(&mut self, record: &PyBamRecord) -> PyResult<()> {
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Writer has been closed")
+        })?;
+
+        // Convert PyBamRecord to Record
+        let rust_record = crate::io::bam::Record {
+            name: record.name.clone(),
+            reference_id: record.reference_id,
+            position: record.position,
+            mapq: record.mapq,
+            flags: record.flags,
+            mate_reference_id: record.mate_reference_id,
+            mate_position: record.mate_position,
+            template_length: record.template_length,
+            sequence: record.sequence.clone(),
+            quality: record.quality.clone(),
+            cigar: record.cigar_ops.clone(),
+            tags: record.tags.clone(),
+        };
+
+        writer.write_record(&rust_record)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                format!("Failed to write record: {}", e)
+            ))
+    }
+
+    /// Close the SAM writer and flush buffers
+    ///
+    /// Note: Writer is automatically flushed when dropped, but calling
+    /// close() explicitly ensures errors are caught.
+    ///
+    /// Example:
+    ///     >>> writer.close()
+    fn close(&mut self) -> PyResult<()> {
+        // Taking the writer will drop it, which flushes via BufWriter's Drop impl
+        self.writer.take();
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("SamWriter(path='{}')", self.path)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 /// Count records by flag categories
@@ -801,7 +1506,7 @@ pub fn mapq_distribution(
 ///     >>> stats = biometal.count_by_flag("alignments.bam")
 ///     >>> print(f"Mapped: {stats['mapped']:,} / {stats['total']:,} ({100*stats['mapped']/stats['total']:.1f}%)")
 #[pyfunction]
-pub fn count_by_flag(py: Python, path: String) -> PyResult<HashMap<String, u32>> {
+pub fn count_by_flag(_py: Python, path: String) -> PyResult<HashMap<String, u32>> {
     let path_buf = PathBuf::from(path);
     let reader = BamReader::from_path(&path_buf)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;

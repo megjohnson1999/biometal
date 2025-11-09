@@ -54,7 +54,11 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBamRecord>()?;
     m.add_class::<PyBamHeader>()?;
     m.add_class::<PyReference>()?;
+    m.add_class::<PyCigarOp>()?;
     m.add_class::<PyBamRegionIter>()?;
+    m.add_class::<PyTag>()?;
+    m.add_class::<PyTagValue>()?;
+    m.add_class::<PySamWriter>()?;
 
     // Register operations
     m.add_function(wrap_pyfunction!(py_gc_content, m)?)?;
