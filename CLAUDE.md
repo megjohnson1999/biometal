@@ -1,8 +1,8 @@
 # biometal: Claude Development Guide
 
 **Project**: biometal - ARM-native bioinformatics library
-**Latest Release**: v1.2.0 (November 6, 2025)
-**Current Work**: BAM/SAM parser complete, Python bindings next (Nov 8, 2025)
+**Latest Release**: v1.3.0 (November 9, 2025)
+**Current Work**: Community feedback and planning (Post v1.3.0)
 
 ---
 
@@ -66,24 +66,32 @@ Platform priority: Mac ARM → Linux ARM (Graviton) → x86_64 fallback
 
 ## Project Status
 
-### Released (v1.2.0)
+### Released (v1.3.0 - November 9, 2025)
 - FASTQ/FASTA streaming parsers (constant memory)
 - ARM NEON operations (base counting, GC content, quality filtering)
 - Sequence manipulation (reverse_complement, trimming, masking)
 - K-mer operations (extraction, minimizers, spectrum)
 - Network streaming (HTTP, SRA)
-- Python bindings (PyO3 0.27, 40+ functions)
-- BAM/SAM parser (production-ready, 4× speedup)
-- 424 tests passing (354 library + 70 BAM parser)
+- Python bindings (PyO3 0.27, 50+ functions)
+- BAM/SAM parser (production-ready, 4× speedup via parallel BGZF)
+- **Python BAM bindings** (CIGAR operations, SAM writing)
+- 545 tests passing (354 library + 70 BAM + 121 doc)
 
 ### Recently Completed
+- **Python BAM Bindings v1.3.0** (src/python/bam.rs) - November 9, 2025
+  - CIGAR operations (PyCigarOp class with 9 type checkers)
+  - CIGAR helper methods (cigar_string, reference_length, query_length, reference_end)
+  - SAM writing (PySamWriter class for BAM → SAM conversion)
+  - CIGAR-aware coverage calculation
+  - 36 comprehensive Python tests
+  - Released to PyPI: https://pypi.org/project/biometal-rs/1.3.0/
+
 - **BAM/SAM Parser with Parallel BGZF** (src/io/bam/) - November 8, 2025
-  - Phases 1-3 COMPLETE and production-ready
+  - Phases 1-4 COMPLETE and production-ready
   - 4,333 lines, 70 tests passing (100% pass rate)
-  - Production-ready: header parsing, record parsing, CIGAR, sequences, tags
+  - Production-ready: header parsing, record parsing, CIGAR, sequences, tags, SAM writing
   - **Parallel BGZF decompression**: 4× overall speedup (43.0 MiB/s throughput)
   - Performance: 4.54 million records/sec, constant ~5 MB memory
-  - Documentation: PHASE_1_COMPLETE.md, PHASE_2_COMPLETE.md, PHASE_3_BENCHMARKS.md
 
 ### Distribution
 - **PyPI**: biometal-rs (pip install biometal-rs)

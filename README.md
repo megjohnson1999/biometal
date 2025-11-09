@@ -183,13 +183,13 @@ biometal's design is grounded in comprehensive experimental validation:
 **v1.1.0** (Released Nov 6, 2025) ✅ - K-mer operations
 **v1.2.0** (Released Nov 6, 2025) ✅ - Python bindings for Phase 4 QC
 **BAM/SAM** (Integrated Nov 8, 2025) ✅ - Native streaming alignment parser with parallel BGZF (4× speedup)
-
-**v1.3.0** (In Development) - Python BAM bindings with CIGAR operations and SAM writing
+**v1.3.0** (Released Nov 9, 2025) ✅ - Python BAM bindings with CIGAR operations and SAM writing
 
 **Next** (Planned):
-- Complete tag parsing (extended types from Phase 1)
-- BAI/CSI index support (random access)
+- BAI/CSI index support (random access to BAM files)
+- Extended tag parsing (full type support)
 - Additional alignment statistics
+- Community feedback & benchmarking
 
 **Future** (Community Driven):
 - Extended operations (alignment, assembly)
@@ -370,9 +370,9 @@ For the experimental methodology:
 ---
 
 <p align="center">
-<strong>Status:</strong> v1.3.0 in development 🚧<br>
-<strong>Latest:</strong> Python BAM bindings with CIGAR operations and SAM writing<br>
-<strong>Tests:</strong> 424 passing (354 library + 70 BAM parser)<br>
+<strong>Status:</strong> v1.3.0 released 🚀<br>
+<strong>Latest:</strong> Python BAM bindings with CIGAR operations and SAM writing (Nov 9, 2025)<br>
+<strong>Tests:</strong> 545 passing (354 library + 70 BAM + 121 doc)<br>
 <strong>Performance:</strong> 4.54M records/sec, 43.0 MiB/s throughput<br>
 <strong>Python Functions:</strong> 50+ (including full BAM support)<br>
 <strong>Evidence Base:</strong> 1,357 experiments, 40,710 measurements
