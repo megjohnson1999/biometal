@@ -11,6 +11,43 @@ license = "MIT OR Apache-2.0"
 keywords = ["bioinformatics", "genomics", "arm", "neon", "streaming"]
 categories = ["science", "parsing"]
 readme = "README.md"
+exclude = [
+    # Large test data files (>10 MB total)
+    "tests/data/large/",
+    "tests/data/synthetic_100k.bam",
+    "tests/data/synthetic_100k.bam.bai",
+
+    # Experiments and research (not needed for package)
+    "experiments/",
+
+    # Planning and session documents
+    "BAI_PERFORMANCE_FINDINGS.md",
+    "CURRENT_STATUS_AND_RECOMMENDATIONS.md",
+    "NEXT_SESSION.md",
+    "NEXT_STEPS_ANALYSIS.md",
+    "PHASE1_PROGRESS_REPORT.md",
+    "PYTHON_BAI_TEST_RESULTS.md",
+    "SESSION_SUMMARY_*.md",
+    "TEST_SESSION_FINDINGS.md",
+    "WEEK3_SUMMARY.md",
+
+    # Benchmark results (not source)
+    "benchmarks/comparison/results_*/",
+
+    # Notebooks (Python package only)
+    "notebooks/",
+
+    # Blog content
+    "blog/",
+
+    # Python cache
+    "tests/python/__pycache__/",
+
+    # Virtual environments
+    "venv/",
+    ".venv/",
+    "tests/python/.venv-test/",
+]
 
 [dependencies]
 # Core I/O and compression

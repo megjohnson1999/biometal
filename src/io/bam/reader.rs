@@ -474,6 +474,7 @@ pub struct RegionQuery {
     /// Seekable BGZF reader
     reader: crate::io::compression::SeekableBgzfReader,
     /// BAM header (for reference validation)
+    #[allow(dead_code)]
     header: Header,
     /// Chunks to read (from BAI index query)
     chunks: Vec<Chunk>,
