@@ -71,6 +71,29 @@ impl CigarOp {
         self.length() == 0
     }
 
+    /// Get the number of reference bases consumed by this operation.
+    ///
+    /// Operations that consume reference bases: M, D, N, =, X
+    /// Operations that don't: I, S, H, P
+    ///
+    /// # Returns
+    ///
+    /// Number of bases consumed on the reference sequence (0 for I, S, H, P).
+    pub fn reference_length(&self) -> i32 {
+        match self {
+            CigarOp::Match(len) => *len as i32,
+            CigarOp::Deletion(len) => *len as i32,
+            CigarOp::RefSkip(len) => *len as i32,
+            CigarOp::SeqMatch(len) => *len as i32,
+            CigarOp::SeqMismatch(len) => *len as i32,
+            // These operations don't consume reference bases
+            CigarOp::Insertion(_) |
+            CigarOp::SoftClip(_) |
+            CigarOp::HardClip(_) |
+            CigarOp::Padding(_) => 0,
+        }
+    }
+
     /// Get the operation type as a character (for SAM format).
     pub fn as_char(&self) -> char {
         match self {

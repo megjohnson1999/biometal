@@ -1,0 +1,93 @@
+name: Documentation Improvement
+description: Suggest improvements to biometal documentation
+title: "[Docs]: "
+labels: ["documentation", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve biometal documentation! Clear documentation is essential for usability.
+
+  - type: dropdown
+    id: doc_type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation needs improvement?
+      options:
+        - User Guide
+        - Performance Optimization Guide
+        - API Reference (Rust docs)
+        - Python API Reference
+        - Tutorial/Notebook
+        - README
+        - Code examples
+        - Migration guide (from pysam/samtools)
+        - CONTRIBUTING guide
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation Location
+      description: Where is the documentation that needs improvement?
+      placeholder: |
+        Example: docs/USER_GUIDE.md, section "Common Workflows"
+        Or: https://docs.rs/biometal/latest/biometal/io/bam/struct.BamReader.html
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's Wrong or Missing?
+      description: Describe the documentation issue
+      placeholder: |
+        Example: The BAI index tutorial doesn't explain how to generate .bai files from .bam files
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: How should the documentation be improved?
+      placeholder: |
+        Example: Add a section showing how to use samtools index to generate .bai files:
+
+        ```bash
+        samtools index alignments.bam
+        # Creates alignments.bam.bai
+        ```
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Impact
+      description: How much does this affect user experience?
+      options:
+        - High - Critical information is missing or incorrect
+        - Medium - Would significantly improve clarity
+        - Low - Minor improvement or typo fix
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Would you be willing to help improve this documentation?
+      options:
+        - label: I would be willing to submit a PR with the improvement
+        - label: I can provide examples or use cases
+        - label: I can review proposed changes
+
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you've completed these steps before submitting
+      options:
+        - label: I have searched existing issues to avoid duplicates
+          required: true
+        - label: I have clearly identified the documentation that needs improvement
+          required: true

@@ -75,6 +75,26 @@ key_results = "BAM: 2-3× speedup (NEON), CAF: 5-10× speedup (columnar), lossle
 files = "PAPER_OUTLINE.md, BENCHMARKING_PLAN.md, README.md"
 phase = "Week 1 of 24 (implementation phase)"
 
+[[experiment]]
+name = "bam-post-neon-profiling"
+status = "completed"
+hypothesis = "Post-NEON profiling will identify component ≥15% CPU time for next optimization"
+start_date = "2025-11-09"
+end_date = "2025-11-09"
+owner = "Claude (AI assistant)"
+timeline = "4 hours (same-day completion)"
+success_criteria = "Identify component ≥15% CPU time, NEON validation ≥5% improvement, clear next optimization path"
+decision_date = "2025-11-09"
+outcome = "validation-successful"  # No optimization target found, but implementation validated
+reason = "No component meets ≥15% threshold (largest: 2.1% record parsing). All biometal code well-optimized (7.1% total). Maximum possible gain <7.6% below worthwhile threshold."
+final_speedup = "N/A (validation experiment, not optimization)"
+validation_results = "NEON: +27.5% validated (1.2% CPU time). Parallel BGZF: 40.67% → 16.66% overhead (small → large files). Entry 029 predictions confirmed."
+key_findings = "1) NEON working perfectly. 2) No component ≥15%. 3) Parallel BGZF overhead file-size dependent. 4) Adaptive parallelism recommended (enhancement, not optimization)."
+learnings = "Evidence-based optimization has diminishing returns. After 2-3 major optimizations, focus shifts to features. Profiling essential for validation. Overhead scales with granularity."
+recommendation = "Implement adaptive parallelism (8MB threshold), then focus on features (BAI index, extended tags, CRAM) for better ROI"
+files = "PROPOSAL.md, RESEARCH_LOG.md, FLAMEGRAPH_ANALYSIS.md, COMPARISON.md, FINDINGS.md, flamegraph.svg, flamegraph_large.svg"
+next_action = "Implement adaptive parallelism enhancement (v1.5.1)"
+
 # Future experiments will be added here as they're proposed
 # Format:
 # [[experiment]]

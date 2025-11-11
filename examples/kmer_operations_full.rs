@@ -44,7 +44,7 @@ fn main() -> biometal::Result<()> {
     for minimizer in &minimizers {
         println!("  Position {}: {} (hash={})",
                  minimizer.position,
-                 String::from_utf8_lossy(&minimizer.kmer),
+                 String::from_utf8_lossy(minimizer.kmer(sequence)),
                  minimizer.hash);
     }
     println!("\nNote: Entry 034 validated minimap2's scalar design (1.26× parallel, below threshold)");

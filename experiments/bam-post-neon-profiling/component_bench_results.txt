@@ -1,0 +1,24 @@
+warning: unused variable: `source`
+  --> benches/bam_component_profiling.rs:89:9
+   |
+89 |     let source = DataSource::from_path(TEST_BAM);
+   |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_source`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: function `configure_criterion` is never used
+  --> benches/bam_component_profiling.rs:20:4
+   |
+20 | fn configure_criterion() -> Criterion {
+   |    ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: `biometal` (bench "bam_component_profiling") generated 2 warnings
+    Finished `bench` profile [optimized] target(s) in 0.05s
+     Running benches/bam_component_profiling.rs (target/release/deps/bam_component_profiling-188c8eb41f6baa6e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

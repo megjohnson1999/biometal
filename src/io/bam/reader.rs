@@ -30,9 +30,11 @@
 //! ```
 
 use super::header::{read_header, Header};
+use super::index::{BaiIndex, Chunk};
 use super::record::{parse_record, Record};
 use crate::io::compression::{CompressedReader, DataSource};
-use std::io::{self, BufRead};
+use std::fs::File;
+use std::io::{self, BufRead, Read};
 use std::path::Path;
 
 /// BAM file reader with streaming interface.
@@ -244,6 +246,191 @@ impl BamReader<CompressedReader> {
         // - io::Error automatically converts to BiometalError via From trait
         Ok(Self::new(reader)?)
     }
+
+    /// Plan a region query using an index.
+    ///
+    /// Returns the chunks (virtual file offset ranges) that need to be read
+    /// to retrieve all alignments overlapping the specified region.
+    ///
+    /// # Phase 1 API
+    ///
+    /// This is a Phase 1 implementation that returns the query plan (chunks to read)
+    /// rather than automatically executing the query. Full automatic region queries
+    /// with seeking will be added in Phase 2.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - BAI index for this BAM file
+    /// * `reference_name` - Reference sequence name (e.g., "chr1", "1")
+    /// * `start` - Start position (0-based, inclusive)
+    /// * `end` - End position (0-based, exclusive)
+    ///
+    /// # Returns
+    ///
+    /// * `Some(chunks)` - List of chunks to read for this region
+    /// * `None` - Reference not found or no data for region
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use biometal::io::bam::{BamReader, BaiIndex};
+    /// # fn main() -> biometal::Result<()> {
+    /// let bam = BamReader::from_path("alignments.bam")?;
+    /// let index = BaiIndex::from_path("alignments.bam.bai")?;
+    ///
+    /// // Get chunks for region chr1:1000-2000
+    /// if let Some(chunks) = bam.query_chunks(&index, "chr1", 1000, 2000) {
+    ///     println!("Need to read {} chunks for this region", chunks.len());
+    ///     for chunk in &chunks {
+    ///         println!("  Chunk: compressed offset {} to {}",
+    ///                  chunk.start.compressed_offset(),
+    ///                  chunk.end.compressed_offset());
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_chunks(
+        &self,
+        index: &BaiIndex,
+        reference_name: &str,
+        start: i32,
+        end: i32,
+    ) -> Option<Vec<Chunk>> {
+        // Look up reference ID from name
+        let ref_id = self.header.reference_id(reference_name)?;
+
+        // Query index for chunks
+        index.query_chunks(ref_id, start, end)
+    }
+
+    /// Plan a region query using reference ID.
+    ///
+    /// Similar to `query_chunks` but takes a reference ID directly instead of name.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use biometal::io::bam::{BamReader, BaiIndex};
+    /// # fn main() -> biometal::Result<()> {
+    /// let bam = BamReader::from_path("alignments.bam")?;
+    /// let index = BaiIndex::from_path("alignments.bam.bai")?;
+    ///
+    /// // Query first reference (ID 0), region 1000-2000
+    /// if let Some(chunks) = bam.query_chunks_by_id(&index, 0, 1000, 2000) {
+    ///     println!("Found {} chunks", chunks.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_chunks_by_id(
+        &self,
+        index: &BaiIndex,
+        ref_id: usize,
+        start: i32,
+        end: i32,
+    ) -> Option<Vec<Chunk>> {
+        index.query_chunks(ref_id, start, end)
+    }
+
+    /// Execute a region query and return an iterator over overlapping records.
+    ///
+    /// **Phase 2**: This is the complete region query implementation with automatic
+    /// seeking and filtering. Records are streamed with constant memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the BAM file (must be seekable, local file)
+    /// * `index` - BAI index for this BAM file
+    /// * `reference_name` - Reference sequence name (e.g., "chr1", "1")
+    /// * `start` - Start position (0-based, inclusive)
+    /// * `end` - End position (0-based, exclusive)
+    ///
+    /// # Returns
+    ///
+    /// An iterator that yields records overlapping the specified region.
+    /// Records are filtered to only include those that overlap [start, end).
+    ///
+    /// # Memory Footprint (Rule 5)
+    ///
+    /// - Seekable reader: ~130 KB (one decompressed block)
+    /// - Record buffer: ~500 bytes (reused)
+    /// - Total: Constant memory regardless of region size
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use biometal::io::bam::{BamReader, BaiIndex};
+    /// # fn main() -> biometal::Result<()> {
+    /// let index = BaiIndex::from_path("alignments.bam.bai")?;
+    ///
+    /// // Query chr1:1000-2000
+    /// let query = BamReader::query(
+    ///     "alignments.bam",
+    ///     &index,
+    ///     "chr1",
+    ///     1000,
+    ///     2000
+    /// )?;
+    ///
+    /// for result in query {
+    ///     let record = result?;
+    ///     println!("Read {} at position {}",
+    ///              record.name,
+    ///              record.position.unwrap_or(-1));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query<P: AsRef<Path>>(
+        path: P,
+        index: &BaiIndex,
+        reference_name: &str,
+        start: i32,
+        end: i32,
+    ) -> crate::Result<RegionQuery> {
+        // Open BAM file to get header and reference ID
+        let bam = BamReader::from_path(&path)?;
+
+        // Look up reference ID from name
+        let ref_id = bam.header.reference_id(reference_name)
+            .ok_or_else(|| io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Reference '{}' not found in BAM header", reference_name)
+            ))?;
+
+        // Get chunks for this region
+        let chunks = index.query_chunks(ref_id, start, end)
+            .ok_or_else(|| io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("No data found for reference {} region {}:{}",
+                         reference_name, start, end)
+            ))?;
+
+        // Open seekable reader
+        let file = File::open(path.as_ref())?;
+        let mut reader = crate::io::compression::SeekableBgzfReader::new(file)?;
+
+        // Seek to first chunk if chunks exist and get its end offset
+        let current_chunk_end = if let Some(first_chunk) = chunks.first() {
+            reader.seek_to_virtual_offset(first_chunk.start.as_raw())?;
+            first_chunk.end.as_raw()
+        } else {
+            0
+        };
+
+        Ok(RegionQuery {
+            reader,
+            header: bam.header,
+            chunks,
+            current_chunk_idx: 0,
+            ref_id,
+            start,
+            end,
+            buffer: Vec::with_capacity(512),
+            current_chunk_end,
+        })
+    }
 }
 
 /// Iterator over BAM records.
@@ -261,6 +448,184 @@ impl<'a, R: BufRead> Iterator for Records<'a, R> {
             Ok(Some(record)) => Some(Ok(record)),
             Ok(None) => None,
             Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// Iterator over BAM records in a specific genomic region.
+///
+/// Created by [`BamReader::query()`]. Seeks through indexed chunks and yields
+/// only records that overlap the query region.
+///
+/// # Memory Footprint (Rule 5)
+///
+/// - Seekable reader: ~130 KB (one decompressed block, cached)
+/// - Record buffer: ~500 bytes (reused)
+/// - Chunks vector: Typically <1 KB (small number of chunks per region)
+/// - Total: Constant memory regardless of region size or file size
+///
+/// # Filtering
+///
+/// Records are filtered to ensure they overlap [start, end):
+/// - Reference ID must match query reference
+/// - Record's aligned region must overlap query region
+/// - Unmapped records are excluded
+pub struct RegionQuery {
+    /// Seekable BGZF reader
+    reader: crate::io::compression::SeekableBgzfReader,
+    /// BAM header (for reference validation)
+    header: Header,
+    /// Chunks to read (from BAI index query)
+    chunks: Vec<Chunk>,
+    /// Current chunk index
+    current_chunk_idx: usize,
+    /// Query reference ID
+    ref_id: usize,
+    /// Query start position (0-based, inclusive)
+    start: i32,
+    /// Query end position (0-based, exclusive)
+    end: i32,
+    /// Reusable buffer for reading records
+    buffer: Vec<u8>,
+    /// Virtual offset marking end of current chunk
+    current_chunk_end: u64,
+}
+
+impl RegionQuery {
+    /// Check if a record overlaps the query region.
+    ///
+    /// A record overlaps if:
+    /// - Reference ID matches
+    /// - Record is mapped
+    /// - Aligned region [pos, pos + alignment_length) overlaps [start, end)
+    fn record_overlaps(&self, record: &Record) -> bool {
+        // Check reference ID
+        if record.reference_id != Some(self.ref_id) {
+            return false;
+        }
+
+        // Check if mapped
+        let pos = match record.position {
+            Some(p) => p,
+            None => return false, // Unmapped
+        };
+
+        // Calculate alignment end position from CIGAR
+        // For region overlap, we need: record_start < query_end && record_end > query_start
+        let alignment_length = record.cigar.iter()
+            .map(|op| op.reference_length())
+            .sum::<i32>();
+
+        let record_end = pos + alignment_length;
+
+        // Check overlap: record must start before query end and end after query start
+        pos < self.end && record_end > self.start
+    }
+
+    /// Read next record from current chunk.
+    ///
+    /// Returns Ok(Some(record)) if record read successfully,
+    /// Ok(None) if end of chunk reached,
+    /// Err if read/parse error.
+    fn read_next_record(&mut self) -> io::Result<Option<Record>> {
+        // Read block size (4 bytes, little-endian)
+        let mut size_buf = [0u8; 4];
+        match self.reader.read(&mut size_buf)? {
+            0 => return Ok(None), // EOF or end of chunk
+            n if n < 4 => return Ok(None), // Incomplete read, end of chunk
+            _ => {}
+        }
+
+        let block_size = i32::from_le_bytes(size_buf);
+        if block_size < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid block size: {}", block_size),
+            ));
+        }
+
+        let block_size = block_size as usize;
+
+        // Reuse buffer for record data
+        self.buffer.clear();
+        self.buffer.reserve(block_size + 4);
+
+        // Put block size at start
+        self.buffer.extend_from_slice(&size_buf);
+
+        // Resize to hold block data
+        self.buffer.resize(4 + block_size, 0);
+
+        // Read record data
+        self.reader.read_exact(&mut self.buffer[4..])?;
+
+        // Parse record
+        let record = parse_record(&self.buffer)?;
+        Ok(Some(record))
+    }
+}
+
+impl Iterator for RegionQuery {
+    type Item = io::Result<Record>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // If we've processed all chunks, we're done
+            if self.current_chunk_idx >= self.chunks.len() {
+                return None;
+            }
+
+            // Check if we've reached the end of the current chunk
+            if self.reader.virtual_offset() >= self.current_chunk_end {
+                // Move to next chunk
+                self.current_chunk_idx += 1;
+
+                if self.current_chunk_idx >= self.chunks.len() {
+                    return None; // No more chunks
+                }
+
+                // Seek to next chunk
+                let next_chunk = &self.chunks[self.current_chunk_idx];
+                match self.reader.seek_to_virtual_offset(next_chunk.start.as_raw()) {
+                    Ok(_) => {
+                        self.current_chunk_end = next_chunk.end.as_raw();
+                    }
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+
+            // Try to read next record
+            match self.read_next_record() {
+                Ok(Some(record)) => {
+                    // Check if record overlaps query region
+                    if self.record_overlaps(&record) {
+                        return Some(Ok(record));
+                    }
+                    // Record doesn't overlap, try next
+                    continue;
+                }
+                Ok(None) => {
+                    // EOF reached, move to next chunk
+                    self.current_chunk_idx += 1;
+
+                    if self.current_chunk_idx >= self.chunks.len() {
+                        return None; // No more chunks
+                    }
+
+                    // Seek to next chunk
+                    let next_chunk = &self.chunks[self.current_chunk_idx];
+                    match self.reader.seek_to_virtual_offset(next_chunk.start.as_raw()) {
+                        Ok(_) => {
+                            self.current_chunk_end = next_chunk.end.as_raw();
+                        }
+                        Err(e) => return Some(Err(e)),
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    return Some(Err(e));
+                }
+            }
         }
     }
 }

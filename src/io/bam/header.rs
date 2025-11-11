@@ -80,6 +80,37 @@ impl Header {
     pub fn reference_count(&self) -> usize {
         self.references.len()
     }
+
+    /// Find a reference by name.
+    ///
+    /// Returns the reference index (ID) and reference data if found.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use biometal::io::bam::BamReader;
+    /// # fn main() -> biometal::Result<()> {
+    /// let mut bam = BamReader::from_path("alignments.bam")?;
+    /// if let Some((ref_id, reference)) = bam.header().find_reference_by_name("chr1") {
+    ///     println!("chr1 is reference {} with length {}", ref_id, reference.length);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn find_reference_by_name(&self, name: &str) -> Option<(usize, &Reference)> {
+        self.references
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.name == name)
+            .map(|(id, r)| (id, r))
+    }
+
+    /// Get reference ID by name.
+    ///
+    /// Convenience method that just returns the ID.
+    pub fn reference_id(&self, name: &str) -> Option<usize> {
+        self.find_reference_by_name(name).map(|(id, _)| id)
+    }
 }
 
 /// Read and validate BAM magic bytes.

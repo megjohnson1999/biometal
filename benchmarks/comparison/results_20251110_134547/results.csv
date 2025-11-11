@@ -1,0 +1,2 @@
+benchmark,mean_seconds,min_seconds,max_seconds
+samtools_view_all,.014,.01350,.01551

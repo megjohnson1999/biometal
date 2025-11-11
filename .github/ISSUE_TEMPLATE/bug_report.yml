@@ -1,0 +1,136 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in biometal
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug in biometal! Please provide as much detail as possible to help us reproduce and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "Example: BamReader crashes when reading files with oversized CIGAR strings"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Please provide a minimal example that reproduces the issue.
+      placeholder: |
+        ```python
+        import biometal
+
+        # Code that reproduces the bug
+        reader = biometal.BamReader.from_path("problem.bam")
+        for record in reader:
+            print(record.qname)
+        ```
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: "Example: Should parse all records without crashing"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: |
+        Example:
+        ```
+        Error: CIGAR string too long (65536 bytes)
+        thread '<unnamed>' panicked at 'index out of bounds'
+        ```
+    validations:
+      required: true
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: biometal Version
+      description: Which version of biometal are you using?
+      options:
+        - v1.6.0 (latest)
+        - v1.5.0
+        - v1.4.0
+        - v1.3.0
+        - v1.2.0
+        - Other (please specify in description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: What platform are you running on?
+      multiple: false
+      options:
+        - macOS (Apple Silicon - M1/M2/M3/M4)
+        - macOS (Intel x86_64)
+        - Linux (ARM - Graviton/other)
+        - Linux (x86_64)
+        - Windows (x86_64)
+        - Other (please specify)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      description: Are you using Python or Rust?
+      options:
+        - Python (biometal-rs from PyPI)
+        - Rust (biometal from crates.io)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: Please provide additional environment information
+      placeholder: |
+        Python version: 3.11.5
+        Rust version: 1.75.0
+        OS version: macOS 14.1
+        CPU: M1 Max
+        RAM: 32 GB
+      render: text
+
+  - type: textarea
+    id: data
+    attributes:
+      label: Sample Data (Optional)
+      description: If possible, provide a link to a small sample file that reproduces the issue
+      placeholder: |
+        Example: tests/data/synthetic_100k.bam
+        Or: Link to public dataset (SRA, 1000 Genomes, etc.)
+
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you've completed these steps before submitting
+      options:
+        - label: I have searched existing issues to avoid duplicates
+          required: true
+        - label: I have provided a minimal reproducible example
+          required: true
+        - label: I have included version and platform information
+          required: true

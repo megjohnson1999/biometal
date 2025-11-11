@@ -16,7 +16,7 @@ use pyo3::types::PyDict;
 use pyo3::exceptions::PyStopIteration;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use crate::io::bam::{BamReader, Header, Reference, Tag, TagValue, ArrayValue, CigarOp, SamWriter};
+use crate::io::bam::{BamReader, Header, Reference, Tag, TagValue, ArrayValue, CigarOp, SamWriter, BaiIndex, RegionQuery};
 use crate::io::compression::CompressedReader;
 use std::fs::File;
 use std::io::BufWriter;
@@ -283,7 +283,14 @@ impl PyTagValue {
     }
 
     /// Get value as array (if it is one)
-    fn as_array(&self, py: Python) -> Option<Py<PyAny>> {
+    ///
+    /// Returns a Python list containing the array values.
+    /// Returns None if the value is not an array type.
+    ///
+    /// # Errors
+    ///
+    /// Returns PyErr if Python list allocation fails (only on extreme memory pressure).
+    fn as_array(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
         use pyo3::types::PyList;
 
         match &self.inner {
@@ -291,35 +298,35 @@ impl PyTagValue {
                 let list = match arr {
                     ArrayValue::Int8(v) => {
                         let items: Vec<i64> = v.iter().map(|&x| x as i64).collect();
-                        PyList::new(py, &items).expect("Failed to create PyList from Vec<i64>")
+                        PyList::new(py, &items)?
                     }
                     ArrayValue::UInt8(v) => {
                         let items: Vec<u64> = v.iter().map(|&x| x as u64).collect();
-                        PyList::new(py, &items).expect("Failed to create PyList from Vec<u64>")
+                        PyList::new(py, &items)?
                     }
                     ArrayValue::Int16(v) => {
                         let items: Vec<i64> = v.iter().map(|&x| x as i64).collect();
-                        PyList::new(py, &items).expect("Failed to create PyList from Vec<i64>")
+                        PyList::new(py, &items)?
                     }
                     ArrayValue::UInt16(v) => {
                         let items: Vec<u64> = v.iter().map(|&x| x as u64).collect();
-                        PyList::new(py, &items).expect("Failed to create PyList from Vec<u64>")
+                        PyList::new(py, &items)?
                     }
                     ArrayValue::Int32(v) => {
                         let items: Vec<i64> = v.iter().map(|&x| x as i64).collect();
-                        PyList::new(py, &items).expect("Failed to create PyList from Vec<i64>")
+                        PyList::new(py, &items)?
                     }
                     ArrayValue::UInt32(v) => {
                         let items: Vec<u64> = v.iter().map(|&x| x as u64).collect();
-                        PyList::new(py, &items).expect("Failed to create PyList from Vec<u64>")
+                        PyList::new(py, &items)?
                     }
                     ArrayValue::Float(v) => {
-                        PyList::new(py, v.as_slice()).expect("Failed to create PyList from Vec<f32>")
+                        PyList::new(py, v.as_slice())?
                     }
                 };
-                Some(list.into())
+                Ok(Some(list.into()))
             }
-            _ => None,
+            _ => Ok(None),
         }
     }
 
@@ -1237,18 +1244,225 @@ impl PyBamReader {
         })
     }
 
+    /// Query records in a specific genomic region using BAI index (efficient, O(log n))
+    ///
+    /// Uses a BAI index to seek directly to records overlapping the query region,
+    /// avoiding full file scans. This is much faster than query() for large files.
+    ///
+    /// Args:
+    ///     path (str): Path to BAM file
+    ///     index (BaiIndex): BAI index loaded via BaiIndex.from_path()
+    ///     reference_name (str): Reference name (e.g., "chr1", "chrM")
+    ///     start (int): Start position (0-based, inclusive)
+    ///     end (int): End position (0-based, exclusive)
+    ///
+    /// Returns:
+    ///     BamIndexedRegionIter: Iterator yielding records in the specified region
+    ///
+    /// Performance:
+    ///     - Seeking: O(log n) using hierarchical binning
+    ///     - Memory: Constant ~130 KB (seekable BGZF reader)
+    ///     - Only reads data overlapping the query region
+    ///
+    /// Example:
+    ///     >>> # Load index once
+    ///     >>> index = biometal.BaiIndex.from_path("alignments.bam.bai")
+    ///     >>>
+    ///     >>> # Query chr1:1000-2000 with O(log n) performance
+    ///     >>> for record in biometal.BamReader.query_region(
+    ///     ...     "alignments.bam",
+    ///     ...     index,
+    ///     ...     "chr1",
+    ///     ...     1000,
+    ///     ...     2000
+    ///     ... ):
+    ///     ...     print(f"{record.name} at {record.position}")
+    ///     >>>
+    ///     >>> # Query multiple regions efficiently (reuse index)
+    ///     >>> for record in biometal.BamReader.query_region("alignments.bam", index, "chr2", 5000, 6000):
+    ///     ...     process(record)
+    #[staticmethod]
+    fn query_region(
+        path: String,
+        index: &PyBaiIndex,
+        reference_name: String,
+        start: i32,
+        end: i32,
+    ) -> PyResult<PyBamIndexedRegionIter> {
+        // Validate inputs
+        if reference_name.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Reference name cannot be empty"
+            ));
+        }
+
+        if start < 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Start position must be non-negative, got {}", start)
+            ));
+        }
+
+        if end < 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("End position must be non-negative, got {}", end)
+            ));
+        }
+
+        if start >= end {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("Start position ({}) must be less than end position ({})", start, end)
+            ));
+        }
+
+        let path_buf = PathBuf::from(path);
+
+        let region_query = BamReader::query(
+            &path_buf,
+            &index.inner,
+            &reference_name,
+            start,
+            end,
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+            format!("Failed to query region: {}", e)
+        ))?;
+
+        Ok(PyBamIndexedRegionIter {
+            inner: Some(region_query),
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("BamReader(references={})", self.header.reference_count)
     }
 }
 
-/// Iterator for querying BAM records in a genomic region
+/// BAM index (BAI) for random access to BAM files
+///
+/// Enables efficient region queries by seeking directly to relevant data
+/// using BGZF virtual offsets. Provides O(log n) query performance instead
+/// of O(n) full file scans.
+///
+/// Attributes:
+///     reference_count (int): Number of reference sequences indexed
+///
+/// Example:
+///     >>> # Load BAI index
+///     >>> index = biometal.BaiIndex.from_path("alignments.bam.bai")
+///     >>> print(f"Indexed {index.reference_count} references")
+///     >>>
+///     >>> # Use index for efficient region query
+///     >>> for record in biometal.BamReader.query_region(
+///     ...     "alignments.bam",
+///     ...     index,
+///     ...     "chr1",
+///     ...     1000,
+///     ...     2000
+///     ... ):
+///     ...     print(f"{record.name} at {record.position}")
+///
+/// Performance:
+///     - Seeking: O(log n) using hierarchical binning
+///     - Memory: Constant ~130 KB during iteration
+///     - Only reads data overlapping the query region
+#[pyclass(name = "BaiIndex")]
+pub struct PyBaiIndex {
+    inner: BaiIndex,
+}
+
+#[pymethods]
+impl PyBaiIndex {
+    /// Load a BAI index from file
+    ///
+    /// Args:
+    ///     path (str): Path to BAI index file (.bam.bai)
+    ///
+    /// Returns:
+    ///     BaiIndex: Loaded index
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be opened
+    ///     ValueError: If index format is invalid
+    ///
+    /// Example:
+    ///     >>> index = biometal.BaiIndex.from_path("alignments.bam.bai")
+    ///     >>> print(f"References: {index.reference_count}")
+    #[staticmethod]
+    fn from_path(path: String) -> PyResult<Self> {
+        let path_buf = PathBuf::from(path);
+        let index = BaiIndex::from_path(&path_buf)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                format!("Failed to load BAI index: {}", e)
+            ))?;
+
+        Ok(PyBaiIndex { inner: index })
+    }
+
+    /// Get number of indexed reference sequences
+    ///
+    /// Returns:
+    ///     int: Number of references in the index
+    #[getter]
+    fn reference_count(&self) -> usize {
+        self.inner.references.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("BaiIndex(references={})", self.inner.references.len())
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// Iterator for indexed region queries (efficient, O(log n))
+///
+/// Created by BamReader.query_region(). Uses BAI index to seek directly to
+/// records overlapping the query region, avoiding full file scans.
+///
+/// Memory footprint: Constant ~130 KB (seekable BGZF reader)
+///
+/// Example:
+///     >>> index = biometal.BaiIndex.from_path("alignments.bam.bai")
+///     >>> for record in biometal.BamReader.query_region("alignments.bam", index, "chr1", 1000, 2000):
+///     ...     print(f"{record.name}: {record.position}")
+#[pyclass(name = "BamIndexedRegionIter", unsendable)]
+pub struct PyBamIndexedRegionIter {
+    inner: Option<RegionQuery>,
+}
+
+#[pymethods]
+impl PyBamIndexedRegionIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyBamRecord> {
+        if let Some(ref mut query) = slf.inner {
+            match query.next() {
+                Some(Ok(record)) => Ok(record.into()),
+                Some(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Error reading record: {}", e)
+                )),
+                None => Err(PyStopIteration::new_err("no more records in region")),
+            }
+        } else {
+            Err(PyStopIteration::new_err("iterator exhausted"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        "BamIndexedRegionIter".to_string()
+    }
+}
+
+/// Iterator for querying BAM records in a genomic region (legacy, O(n) scan)
 ///
 /// Created by BamReader.query(). Yields only records within the specified region.
 ///
 /// Note:
-///     This performs a full file scan. BAI/CSI index support for O(log n) queries
-///     is planned for a future release.
+///     This performs a full file scan. For efficient O(log n) queries, use
+///     BamReader.query_region() with a BAI index instead.
 #[pyclass(name = "BamRegionIter", unsendable)]
 pub struct PyBamRegionIter {
     reader: Option<BamReader<CompressedReader>>,

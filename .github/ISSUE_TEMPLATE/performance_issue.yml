@@ -1,0 +1,163 @@
+name: Performance Issue
+description: Report unexpected performance or memory usage in biometal
+title: "[Performance]: "
+labels: ["performance", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a performance issue! biometal is designed for high performance and constant memory usage. Please provide benchmark details.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Performance Issue Description
+      description: What performance problem are you experiencing?
+      placeholder: |
+        Example: BAM parsing is slower than expected on large files, seeing 20 MiB/s instead of advertised 55 MiB/s
+    validations:
+      required: true
+
+  - type: textarea
+    id: benchmark
+    attributes:
+      label: Benchmark Code
+      description: Please provide code to reproduce the performance issue
+      placeholder: |
+        ```python
+        import biometal
+        import time
+
+        start = time.time()
+        count = 0
+        for record in biometal.BamReader.from_path("large_file.bam"):
+            count += 1
+        elapsed = time.time() - start
+
+        print(f"Processed {count} records in {elapsed:.2f}s")
+        print(f"Throughput: {file_size_mb / elapsed:.1f} MiB/s")
+        ```
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Performance Measurements
+      description: What throughput or latency are you observing?
+      placeholder: |
+        Example:
+        - File size: 50 GB
+        - Processing time: 45 minutes
+        - Throughput: 18.5 MiB/s (expected 55 MiB/s)
+        - Memory usage: 150 MB (expected ~5 MB)
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Performance
+      description: What performance did you expect based on documentation or benchmarks?
+      placeholder: |
+        Example: Documentation states 55 MiB/s sequential BAM parsing, but I'm seeing 18.5 MiB/s
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: What platform are you running on?
+      options:
+        - macOS (Apple Silicon - M1/M2/M3/M4)
+        - macOS (Intel x86_64)
+        - Linux (ARM - Graviton/other)
+        - Linux (x86_64)
+        - Windows (x86_64)
+        - Other (please specify)
+    validations:
+      required: true
+
+  - type: textarea
+    id: system_info
+    attributes:
+      label: System Information
+      description: Please provide detailed system information
+      placeholder: |
+        CPU: M1 Max (10 cores)
+        RAM: 32 GB
+        Storage: SSD (NVMe)
+        OS: macOS 14.1
+        Python: 3.11.5
+        biometal: v1.6.0
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: data
+    attributes:
+      label: Data Characteristics
+      description: Information about the file(s) you're processing
+      placeholder: |
+        File format: BAM (BGZF compressed)
+        File size: 50 GB
+        Number of records: 500 million
+        Read length: 150bp
+        Coverage: 30×
+        Indexed: Yes (BAI)
+
+  - type: textarea
+    id: profiling
+    attributes:
+      label: Profiling Results (Optional)
+      description: If you've run profiling, please share the results
+      placeholder: |
+        Example: cargo bench output, memory profiler results, CPU profiler results
+
+  - type: dropdown
+    id: comparison
+    attributes:
+      label: Comparison Tool
+      description: Have you compared with other tools (samtools, pysam)?
+      options:
+        - "Yes - biometal is slower"
+        - "Yes - biometal is faster"
+        - "No - haven't compared"
+        - "N/A"
+
+  - type: textarea
+    id: comparison_details
+    attributes:
+      label: Comparison Details (Optional)
+      description: If you compared with other tools, what were the results?
+      placeholder: |
+        samtools: 45 MiB/s, 50 MB memory
+        pysam: 35 MiB/s, 200 MB memory
+        biometal: 18.5 MiB/s, 5 MB memory
+
+  - type: checkboxes
+    id: optimization
+    attributes:
+      label: Optimization Checklist
+      description: Have you followed the optimization guidelines?
+      options:
+        - label: I have read the Performance Optimization Guide
+        - label: I am using streaming (not accumulating records in memory)
+        - label: I am on ARM and NEON optimizations should be active
+        - label: I am using indexed queries where appropriate
+
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you've completed these steps before submitting
+      options:
+        - label: I have searched existing issues to avoid duplicates
+          required: true
+        - label: I have provided benchmark code and measurements
+          required: true
+        - label: I have included system and data information
+          required: true

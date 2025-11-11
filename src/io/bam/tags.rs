@@ -345,6 +345,173 @@ impl Tags {
             None => Ok(None),
         }
     }
+
+    /// Get a character tag value.
+    ///
+    /// Convenience method that returns the value if the tag exists and is a character.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use biometal::io::bam::Tags;
+    /// let data = vec![b'C', b'C', b'A', b'X']; // CC:A:X
+    /// let tags = Tags::from_raw(data);
+    /// assert_eq!(tags.get_char(b"CC").unwrap(), Some(b'X'));
+    /// ```
+    pub fn get_char(&self, name: &[u8; 2]) -> io::Result<Option<u8>> {
+        match self.get(name)? {
+            Some(tag) => match tag.value {
+                TagValue::Char(c) => Ok(Some(c)),
+                _ => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Get a float tag value.
+    ///
+    /// Convenience method that returns the value if the tag exists and is a float.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use biometal::io::bam::Tags;
+    /// let data = vec![b'F', b'V', b'f', 0x00, 0x00, 0x80, 0x3F]; // FV:f:1.0
+    /// let tags = Tags::from_raw(data);
+    /// assert_eq!(tags.get_float(b"FV").unwrap(), Some(1.0));
+    /// ```
+    pub fn get_float(&self, name: &[u8; 2]) -> io::Result<Option<f32>> {
+        match self.get(name)? {
+            Some(tag) => match tag.value {
+                TagValue::Float(f) => Ok(Some(f)),
+                _ => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Get a hex string tag value.
+    ///
+    /// Convenience method that returns the value if the tag exists and is a hex string.
+    pub fn get_hex(&self, name: &[u8; 2]) -> io::Result<Option<String>> {
+        match self.get(name)? {
+            Some(tag) => match tag.value {
+                TagValue::Hex(h) => Ok(Some(h)),
+                _ => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Get an array tag value.
+    ///
+    /// Convenience method that returns the value if the tag exists and is an array.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use biometal::io::bam::{Tags, ArrayValue};
+    /// // Create array tag: TS:B:I:3,1,2,3 (UInt32 array)
+    /// let data = vec![
+    ///     b'T', b'S', b'B', b'I',      // Tag name, type, array type
+    ///     0x03, 0x00, 0x00, 0x00,      // count = 3
+    ///     0x01, 0x00, 0x00, 0x00,      // [0] = 1
+    ///     0x02, 0x00, 0x00, 0x00,      // [1] = 2
+    ///     0x03, 0x00, 0x00, 0x00,      // [2] = 3
+    /// ];
+    /// let tags = Tags::from_raw(data);
+    /// if let Some(ArrayValue::UInt32(values)) = tags.get_array(b"TS").unwrap() {
+    ///     assert_eq!(values, vec![1, 2, 3]);
+    /// }
+    /// ```
+    pub fn get_array(&self, name: &[u8; 2]) -> io::Result<Option<ArrayValue>> {
+        match self.get(name)? {
+            Some(tag) => match tag.value {
+                TagValue::Array(arr) => Ok(Some(arr)),
+                _ => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    // ==================================================================
+    // Common BAM Tag Convenience Methods
+    // ==================================================================
+
+    /// Get edit distance (NM tag).
+    ///
+    /// Returns the number of differences between the reference and query sequence.
+    /// This is a standard SAM optional tag.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use biometal::io::bam::Tags;
+    /// let data = vec![b'N', b'M', b'i', 0x05, 0x00, 0x00, 0x00]; // NM:i:5
+    /// let tags = Tags::from_raw(data);
+    /// assert_eq!(tags.edit_distance().unwrap(), Some(5));
+    /// ```
+    pub fn edit_distance(&self) -> io::Result<Option<i32>> {
+        self.get_i32(b"NM")
+    }
+
+    /// Get alignment score (AS tag).
+    ///
+    /// Returns the aligner-specific alignment score.
+    pub fn alignment_score(&self) -> io::Result<Option<i32>> {
+        self.get_i32(b"AS")
+    }
+
+    /// Get mapping quality (MQ tag).
+    ///
+    /// Returns the mapping quality of the mate/next segment.
+    pub fn mate_mapping_quality(&self) -> io::Result<Option<i32>> {
+        self.get_i32(b"MQ")
+    }
+
+    /// Get read group (RG tag).
+    ///
+    /// Returns the read group identifier.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use biometal::io::bam::Tags;
+    /// let data = vec![b'R', b'G', b'Z', b'r', b'g', b'1', 0x00]; // RG:Z:rg1
+    /// let tags = Tags::from_raw(data);
+    /// assert_eq!(tags.read_group().unwrap(), Some("rg1".to_string()));
+    /// ```
+    pub fn read_group(&self) -> io::Result<Option<String>> {
+        self.get_string(b"RG")
+    }
+
+    /// Get MD string (MD tag).
+    ///
+    /// Returns the string encoding mismatched and deleted reference bases.
+    pub fn md_string(&self) -> io::Result<Option<String>> {
+        self.get_string(b"MD")
+    }
+
+    /// Get barcode sequence (BC tag).
+    ///
+    /// Returns the barcode sequence identifying the sample.
+    pub fn barcode(&self) -> io::Result<Option<String>> {
+        self.get_string(b"BC")
+    }
+
+    /// Get UMI (unique molecular identifier) sequence (RX tag).
+    ///
+    /// Returns the sequence bases of the UMI.
+    pub fn umi(&self) -> io::Result<Option<String>> {
+        self.get_string(b"RX")
+    }
+
+    /// Get comment (CO tag).
+    ///
+    /// Returns any free-text comment.
+    pub fn comment(&self) -> io::Result<Option<String>> {
+        self.get_string(b"CO")
+    }
 }
 
 /// Parse tags from BAM record data.
@@ -868,5 +1035,220 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("overflow") || err_msg.contains("Insufficient"),
                 "Expected overflow or insufficient data error, got: {}", err_msg);
+    }
+
+    // Tests for new accessor methods
+
+    #[test]
+    fn test_get_char() {
+        let data = vec![b'C', b'C', b'A', b'X']; // CC:A:X
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.get_char(b"CC").unwrap(), Some(b'X'));
+        assert_eq!(tags.get_char(b"XX").unwrap(), None); // Non-existent tag
+    }
+
+    #[test]
+    fn test_get_float() {
+        let data = vec![b'F', b'V', b'f', 0x00, 0x00, 0x80, 0x3F]; // FV:f:1.0
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.get_float(b"FV").unwrap(), Some(1.0));
+        assert_eq!(tags.get_float(b"XX").unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_hex() {
+        let data = vec![b'H', b'X', b'H', b'A', b'B', b'C', b'D', 0x00]; // HX:H:ABCD
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.get_hex(b"HX").unwrap(), Some("ABCD".to_string()));
+    }
+
+    #[test]
+    fn test_get_array_uint32() {
+        // TS:B:I:3,1,2,3 (UInt32 array)
+        let data = vec![
+            b'T', b'S', b'B', b'I',      // Tag name, type, array type
+            0x03, 0x00, 0x00, 0x00,      // count = 3
+            0x01, 0x00, 0x00, 0x00,      // [0] = 1
+            0x02, 0x00, 0x00, 0x00,      // [1] = 2
+            0x03, 0x00, 0x00, 0x00,      // [2] = 3
+        ];
+        let tags = Tags::from_raw(data);
+        if let Some(ArrayValue::UInt32(values)) = tags.get_array(b"TS").unwrap() {
+            assert_eq!(values, vec![1, 2, 3]);
+        } else {
+            panic!("Expected UInt32 array");
+        }
+    }
+
+    #[test]
+    fn test_get_array_float() {
+        // FL:B:f:2,1.5,2.5 (Float array)
+        let data = vec![
+            b'F', b'L', b'B', b'f',      // Tag name, type, array type
+            0x02, 0x00, 0x00, 0x00,      // count = 2
+            0x00, 0x00, 0xC0, 0x3F,      // [0] = 1.5
+            0x00, 0x00, 0x20, 0x40,      // [1] = 2.5
+        ];
+        let tags = Tags::from_raw(data);
+        if let Some(ArrayValue::Float(values)) = tags.get_array(b"FL").unwrap() {
+            assert_eq!(values.len(), 2);
+            assert!((values[0] - 1.5).abs() < 0.001);
+            assert!((values[1] - 2.5).abs() < 0.001);
+        } else {
+            panic!("Expected Float array");
+        }
+    }
+
+    #[test]
+    fn test_edit_distance() {
+        let data = vec![b'N', b'M', b'i', 0x05, 0x00, 0x00, 0x00]; // NM:i:5
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.edit_distance().unwrap(), Some(5));
+    }
+
+    #[test]
+    fn test_alignment_score() {
+        let data = vec![b'A', b'S', b'i', 0x64, 0x00, 0x00, 0x00]; // AS:i:100
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.alignment_score().unwrap(), Some(100));
+    }
+
+    #[test]
+    fn test_read_group() {
+        let data = vec![b'R', b'G', b'Z', b'r', b'g', b'1', 0x00]; // RG:Z:rg1
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.read_group().unwrap(), Some("rg1".to_string()));
+    }
+
+    #[test]
+    fn test_md_string() {
+        let data = vec![b'M', b'D', b'Z', b'1', b'0', b'0', 0x00]; // MD:Z:100
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.md_string().unwrap(), Some("100".to_string()));
+    }
+
+    #[test]
+    fn test_barcode() {
+        let data = vec![b'B', b'C', b'Z', b'A', b'C', b'G', b'T', 0x00]; // BC:Z:ACGT
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.barcode().unwrap(), Some("ACGT".to_string()));
+    }
+
+    #[test]
+    fn test_umi() {
+        let data = vec![b'R', b'X', b'Z', b'G', b'A', b'T', b'C', 0x00]; // RX:Z:GATC
+        let tags = Tags::from_raw(data);
+        assert_eq!(tags.umi().unwrap(), Some("GATC".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_tags_with_accessors() {
+        // Multiple tags: NM:i:5, AS:i:100, RG:Z:rg1
+        let data = vec![
+            b'N', b'M', b'i', 0x05, 0x00, 0x00, 0x00,  // NM:i:5
+            b'A', b'S', b'i', 0x64, 0x00, 0x00, 0x00,  // AS:i:100
+            b'R', b'G', b'Z', b'r', b'g', b'1', 0x00,  // RG:Z:rg1
+        ];
+        let tags = Tags::from_raw(data);
+
+        assert_eq!(tags.edit_distance().unwrap(), Some(5));
+        assert_eq!(tags.alignment_score().unwrap(), Some(100));
+        assert_eq!(tags.read_group().unwrap(), Some("rg1".to_string()));
+    }
+
+    #[test]
+    fn test_accessor_returns_none_for_wrong_type() {
+        // Tag exists but is wrong type
+        let data = vec![b'N', b'M', b'Z', b'x', b'y', b'z', 0x00]; // NM:Z:xyz (should be int)
+        let tags = Tags::from_raw(data);
+
+        // get_i32 should return None for string tag
+        assert_eq!(tags.get_i32(b"NM").unwrap(), None);
+
+        // get_string should work
+        assert_eq!(tags.get_string(b"NM").unwrap(), Some("xyz".to_string()));
+    }
+
+    #[test]
+    fn test_all_array_types() {
+        // Test Int8 array
+        {
+            let data = vec![
+                b'A', b'1', b'B', b'c',  // A1:B:c (Int8 array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0xFF, 0x01,               // [-1, 1]
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A1").unwrap(), Some(ArrayValue::Int8(_))));
+        }
+
+        // Test UInt8 array
+        {
+            let data = vec![
+                b'A', b'2', b'B', b'C',  // A2:B:C (UInt8 array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0x01, 0x02,               // [1, 2]
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A2").unwrap(), Some(ArrayValue::UInt8(_))));
+        }
+
+        // Test Int16 array
+        {
+            let data = vec![
+                b'A', b'3', b'B', b's',  // A3:B:s (Int16 array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0xFF, 0xFF, 0x01, 0x00,   // [-1, 1]
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A3").unwrap(), Some(ArrayValue::Int16(_))));
+        }
+
+        // Test UInt16 array
+        {
+            let data = vec![
+                b'A', b'4', b'B', b'S',  // A4:B:S (UInt16 array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0x01, 0x00, 0x02, 0x00,   // [1, 2]
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A4").unwrap(), Some(ArrayValue::UInt16(_))));
+        }
+
+        // Test Int32 array
+        {
+            let data = vec![
+                b'A', b'5', b'B', b'i',  // A5:B:i (Int32 array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0xFF, 0xFF, 0xFF, 0xFF,   // -1
+                0x01, 0x00, 0x00, 0x00,   // 1
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A5").unwrap(), Some(ArrayValue::Int32(_))));
+        }
+
+        // Test UInt32 array
+        {
+            let data = vec![
+                b'A', b'6', b'B', b'I',  // A6:B:I (UInt32 array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0x01, 0x00, 0x00, 0x00,   // 1
+                0x02, 0x00, 0x00, 0x00,   // 2
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A6").unwrap(), Some(ArrayValue::UInt32(_))));
+        }
+
+        // Test Float array
+        {
+            let data = vec![
+                b'A', b'7', b'B', b'f',  // A7:B:f (Float array)
+                0x02, 0x00, 0x00, 0x00,  // count = 2
+                0x00, 0x00, 0x80, 0x3F,   // 1.0
+                0x00, 0x00, 0x00, 0x40,   // 2.0
+            ];
+            let tags = Tags::from_raw(data);
+            assert!(matches!(tags.get_array(b"A7").unwrap(), Some(ArrayValue::Float(_))));
+        }
     }
 }

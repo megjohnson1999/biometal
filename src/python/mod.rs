@@ -56,6 +56,8 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyReference>()?;
     m.add_class::<PyCigarOp>()?;
     m.add_class::<PyBamRegionIter>()?;
+    m.add_class::<PyBaiIndex>()?;
+    m.add_class::<PyBamIndexedRegionIter>()?;
     m.add_class::<PyTag>()?;
     m.add_class::<PyTagValue>()?;
     m.add_class::<PySamWriter>()?;

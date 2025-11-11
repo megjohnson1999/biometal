@@ -1,0 +1,22 @@
+   Compiling biometal v1.5.0 (/Users/scotthandley/Code/biometal)
+    Finished `release` profile [optimized] target(s) in 5.20s
+
+WARNING: profiling without debuginfo. Enable symbol information by adding the following lines to Cargo.toml:
+
+[profile.release]
+debug = true
+
+Or set this environment variable:
+
+CARGO_PROFILE_RELEASE_DEBUG=true
+
+Starting recording with the Time Profiler template. Launching process: profile_bam. 
+Ctrl-C to stop the recording
+Parsed 100000 records
+Total sequence length: 10000000 bases
+Total CIGAR ops: 100000
+Total tags: 0
+Target app exited, ending recording...
+Recording completed. Saving output file...
+Output file saved as: cargo-flamegraph.trace
+writing flamegraph to "experiments/bam-post-neon-profiling/flamegraph.svg"

@@ -102,6 +102,7 @@
 pub mod cigar;
 pub mod error;
 pub mod header;
+pub mod index;
 pub mod record;
 pub mod reader;
 pub mod sam_writer;
@@ -112,8 +113,9 @@ pub mod tags;
 pub use cigar::{CigarOp, parse_cigar};
 pub use error::BamDecodeError;
 pub use header::{Header, Reference};
+pub use index::{BaiIndex, VirtualOffset, Chunk, Bin, ReferenceIndex};
 pub use record::{Record, parse_record};
-pub use reader::{BamReader, Records};
+pub use reader::{BamReader, Records, RegionQuery};
 pub use sam_writer::SamWriter;
 pub use sequence::decode_sequence;
 pub use tags::{Tags, Tag, TagValue, ArrayValue, parse_tags};
