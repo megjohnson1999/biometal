@@ -1,8 +1,9 @@
 # biometal: Claude Development Guide
 
 **Project**: biometal - ARM-native bioinformatics library
-**Latest Release**: v1.3.0 (November 9, 2025)
-**Current Work**: Community feedback and planning (Post v1.3.0)
+**Latest Release**: v1.4.0 (November 8, 2025)
+**Current Focus**: Core development, research archived
+**Research Status**: CAF columnar format evaluated (Nov 4-11) - Archived
 
 ---
 
@@ -10,7 +11,7 @@
 
 Democratize bioinformatics by enabling 5TB dataset analysis on consumer hardware through:
 - **Streaming architecture**: Constant ~5 MB memory (not load-all)
-- **ARM-native performance**: 16-25x NEON speedup
+- **ARM-native performance**: 16-25× NEON speedup
 - **Network streaming**: Analyze without downloading
 - **Evidence-based optimization**: Every rule validated experimentally
 
@@ -39,7 +40,7 @@ Always design for constant memory:
 Always provide both ARM and fallback implementations:
 ```rust
 #[cfg(target_arch = "aarch64")]
-pub fn operation_neon(input: &[u8]) -> Result { /* 16-25x faster */ }
+pub fn operation_neon(input: &[u8]) -> Result { /* 16-25× faster */ }
 
 #[cfg(not(target_arch = "aarch64"))]
 pub fn operation_scalar(input: &[u8]) -> Result { /* x86_64 fallback */ }
@@ -64,241 +65,182 @@ Platform priority: Mac ARM → Linux ARM (Graviton) → x86_64 fallback
 
 ---
 
-## Project Status
+## Recent Research: CAF Columnar Format (Archived)
 
-### Released (v1.3.0 - November 9, 2025)
-- FASTQ/FASTA streaming parsers (constant memory)
-- ARM NEON operations (base counting, GC content, quality filtering)
-- Sequence manipulation (reverse_complement, trimming, masking)
-- K-mer operations (extraction, minimizers, spectrum)
-- Network streaming (HTTP, SRA)
-- Python bindings (PyO3 0.27, 50+ functions)
-- BAM/SAM parser (production-ready, 4× speedup via parallel BGZF)
-- **Python BAM bindings** (CIGAR operations, SAM writing)
-- 545 tests passing (354 library + 70 BAM + 121 doc)
+**Period**: November 4-11, 2025
+**Location**: research/caf-format/implementation/
+**Status**: ✅ Research Complete - Archived
 
-### Recently Completed
-- **Python BAM Bindings v1.3.0** (src/python/bam.rs) - November 9, 2025
-  - CIGAR operations (PyCigarOp class with 9 type checkers)
-  - CIGAR helper methods (cigar_string, reference_length, query_length, reference_end)
-  - SAM writing (PySamWriter class for BAM → SAM conversion)
-  - CIGAR-aware coverage calculation
-  - 36 comprehensive Python tests
-  - Released to PyPI: https://pypi.org/project/biometal-rs/1.3.0/
+### What Was Built
+- Production-quality columnar alignment format (~6,000 lines)
+- BAM ↔ CAF conversion (lossless)
+- Dictionary compression (86% quality score reduction)
+- ARM NEON optimizations (16× base counting speedup)
+- Comprehensive documentation and benchmarks (N=30)
 
-- **BAM/SAM Parser with Parallel BGZF** (src/io/bam/) - November 8, 2025
-  - Phases 1-4 COMPLETE and production-ready
-  - 4,333 lines, 70 tests passing (100% pass rate)
-  - Production-ready: header parsing, record parsing, CIGAR, sequences, tags, SAM writing
-  - **Parallel BGZF decompression**: 4× overall speedup (43.0 MiB/s throughput)
-  - Performance: 4.54 million records/sec, constant ~5 MB memory
+### Key Findings
+- **File size**: 1.6× LARGER than BAM (vs target 0.5-1.0×) ❌
+- **Column-selective reading**: 1.4× speedup (vs predicted 3-5×) ⚠️
+- **NEON effectiveness**: Varies by operation (1.3-16× speedup)
+- **Compiler auto-vec**: Can beat explicit SIMD for simple operations
+- **Research value**: Good methodology, valuable negative results ✅
+
+### Verdict
+CAF doesn't outperform BAM/CRAM enough to justify adoption (files 60% larger, modest speedups). Valuable for methodology demonstration and lessons learned. See `research/caf-format/implementation/CAF_FINAL_REPORT.md` for full analysis.
+
+### Lessons Applied to biometal
+1. Profile before assuming SIMD is faster
+2. Data layout significantly affects performance
+3. Benchmark with N=30 for statistical rigor
+4. Document negative results honestly
+
+**Status**: Archived for reference, returning to biometal core development
+
+---
+
+## Current Status (v1.4.0)
+
+### Released Features
+- **FASTQ/FASTA** streaming parsers (constant memory)
+- **ARM NEON** operations (base counting, GC content, quality filtering)
+- **Sequence manipulation** (reverse_complement, trimming, masking)
+- **K-mer operations** (extraction, minimizers, spectrum)
+- **Network streaming** (HTTP, SRA)
+- **BAM/SAM parser** (v1.4.0, November 8, 2025 - production-ready)
+  - Full BAM parsing (header, records, CIGAR, tags, sequences)
+  - ARM NEON sequence decoding (+27.5% BAM parsing speedup)
+  - SAM writing for downstream tools
+  - Robustness features (oversized CIGAR, malformed record handling)
+  - 70 tests passing (integration complete)
+- **Python bindings** (PyO3 0.27, 40+ functions)
+  - Full BAM/FASTQ/FASTA support
+  - CIGAR operations, SAM writing
+- **Tests**: 347 passing (260 library + 87 doc)
+
+### Optimization Rules Implemented
+
+| Rule | Feature | Status | Impact |
+|------|---------|--------|--------|
+| **Rule 1** | ARM NEON SIMD | ✅ v1.0.0 | 16-25× speedup |
+| **Rule 2** | Block-based processing | ✅ v1.0.0 | Preserves NEON gains |
+| **Rule 3** | Parallel BGZF | ⏳ Phase 2 | 6.5× (planned) |
+| **Rule 4** | Smart mmap | ⏳ Phase 2 | 2.5× (planned) |
+| **Rule 5** | Constant-memory streaming | ✅ v1.0.0 | 99.5% memory reduction |
+| **Rule 6** | Network streaming | ✅ v1.0.0 | Enables remote analysis |
+
+**Current**: 4/6 rules (67%)
+**Phase 2 Target**: 6/6 rules (100%), 27× combined speedup
 
 ### Distribution
-- **PyPI**: biometal-rs (pip install biometal-rs)
-- **crates.io**: biometal (cargo add biometal)
+- **PyPI**: biometal-rs v1.4.0 (pip install biometal-rs)
+- **crates.io**: biometal v1.4.0 (cargo add biometal)
 
 ---
 
-## Project Structure
+## Current Work: Phase 1 Consolidation
 
-```
-biometal/
-├── src/
-│   ├── lib.rs              # Public API
-│   ├── io/                 # Streaming parsers
-│   │   ├── fastq.rs        # FASTQ streaming
-│   │   ├── fasta.rs        # FASTA streaming
-│   │   ├── bam/            # BAM/SAM parser (Nov 8, 2025)
-│   │   │   ├── reader.rs   # BamReader streaming interface
-│   │   │   ├── record.rs   # Record parsing with robustness
-│   │   │   ├── header.rs   # Header and reference parsing
-│   │   │   ├── cigar.rs    # CIGAR operations
-│   │   │   ├── sequence.rs # 4-bit sequence decoding
-│   │   │   ├── tags.rs     # Auxiliary tag parsing
-│   │   │   ├── error.rs    # Structured error types
-│   │   │   └── sam_writer.rs # SAM format output
-│   │   ├── compression.rs  # Parallel bgzip + mmap
-│   │   ├── network.rs      # HTTP streaming
-│   │   ├── paired.rs       # Paired-end reads
-│   │   ├── sink.rs         # Output writers
-│   │   └── sra.rs          # SRA toolkit wrapper
-│   ├── operations/         # Analysis operations
-│   │   ├── base_counting.rs    # NEON-optimized
-│   │   ├── gc_content.rs       # NEON-optimized
-│   │   ├── quality_filter.rs   # NEON-optimized
-│   │   ├── sequence.rs         # Sequence manipulation
-│   │   ├── record_ops.rs       # Record operations
-│   │   ├── trimming.rs         # Quality/fixed trimming
-│   │   ├── masking.rs          # Quality masking
-│   │   ├── kmer.rs             # K-mer operations
-│   │   └── complexity.rs       # Shannon entropy
-│   ├── python/             # Python bindings (PyO3)
-│   ├── optimization/       # Platform detection
-│   ├── error.rs            # Error types
-│   └── types.rs            # Common types
-├── benches/                # Criterion benchmarks
-├── examples/               # Usage examples
-├── experiments/            # Research experiments
-│   ├── .experiments.toml   # Experiment registry
-│   ├── TEMPLATE/           # Experiment template
-│   ├── sra-decoder/        # Completed (NO-GO)
-│   └── native-bam-implementation/  # In progress
-├── OPTIMIZATION_RULES.md   # Evidence base (1,357 experiments)
-├── CLAUDE.md               # This file
-└── CHANGELOG.md            # Version history
-```
+### Weeks 1-2: ✅ COMPLETE (November 10, 2025)
+
+**Documentation Sprint (Week 1)**:
+- ✅ User Guide (25,000+ words): docs/USER_GUIDE.md
+- ✅ Performance Guide (10,000+ words): docs/PERFORMANCE_OPTIMIZATION_GUIDE.md
+- ✅ BAI Tutorial (Jupyter): notebooks/07_bai_indexed_queries.ipynb
+- ✅ Enhanced API docs: src/io/bam/index.rs
+
+**Performance Benchmarking (Week 2)**:
+- ✅ Comprehensive comparison vs samtools/pysam: benchmarks/comparison/BENCHMARK_COMPARISON.md
+- ✅ Validated all v1.6.0 claims (1.68× indexed speedup, 10-200× memory advantage)
+- ✅ Real-world scenario analysis (3 production use cases)
+- ✅ Automated benchmark framework: benchmarks/comparison/samtools_vs_biometal.sh
+
+**Status**: 50% of Phase 1 complete, strong foundation for community launch
+
+### Weeks 3-4: 🔄 IN PROGRESS
+
+**Community Building (Week 3)**:
+- [ ] Blog post announcing v1.6.0
+- [ ] Social media campaign (Twitter, Reddit, Biostars, LinkedIn)
+- [ ] Engage with tool maintainers (samtools, pysam, HTSlib)
+- [ ] Set up GitHub discussions and issue templates
+
+**Quality Assurance (Week 4)**:
+- [ ] Property-based testing expansion
+- [ ] Fuzz testing for robustness
+- [ ] Cross-platform validation (Graviton, x86_64)
+- [ ] Memory safety audit (Valgrind, ASAN, Miri)
 
 ---
 
-## The 6 Optimization Rules
+## Future Work
 
-### Rule 1: ARM NEON SIMD (16-25x speedup)
-**When**: Element-wise operations (complexity 0.30-0.40)
-**Evidence**: Entry 020-025 (307 experiments, 9,210 measurements)
-**Example**: Base counting, GC content calculation
+### Phase 2: High-ROI Performance (Weeks 5-9)
 
-### Rule 2: Block-Based Processing (10K records)
-**When**: Preserving NEON speedup in streaming contexts
-**Evidence**: Entry 027 (1,440 measurements)
-**Value**: Avoids 82-86% overhead from single-record processing
+**Objective**: Implement remaining optimization rules for 27× combined speedup
 
-### Rule 3: Parallel Bgzip (6.5x speedup)
-**When**: All bgzip-compressed files
-**Evidence**: Entry 029 (CPU parallel prototype)
-**Implementation**: Rayon-based parallel block decompression
+**Rule 3: Parallel BGZF Decompression** (6.5× speedup)
+- Current: 55 MiB/s
+- Target: 358 MiB/s
+- Effort: 40-60 hours
+- Evidence: Entry 029 (CPU parallel prototype)
 
-### Rule 4: Smart mmap (2.5x additional)
-**When**: Files ≥50 MB on macOS
-**Evidence**: Entry 032 (scale validation, 0.54-544 MB)
-**Threshold-based**: Only activate for large files
+**Rule 4: Smart mmap** (2.5× additional)
+- Combined with Rule 3: 895 MiB/s
+- Total: **16× improvement** over current
+- Effort: 40-60 hours
+- Evidence: Entry 032 (scale validation)
 
-### Rule 5: Constant-Memory Streaming (~5 MB)
-**Always**: Design for streaming, not batch
-**Evidence**: Entry 026 (720 measurements, 99.5% reduction)
-**Pattern**: Iterator-based APIs, no accumulation
+**Expected Outcome**:
+- Sequential BAM parsing: 55 MiB/s → **895 MiB/s**
+- All 6 optimization rules implemented (100%)
+- Validated against ASBB experiments
 
-### Rule 6: Network Streaming
-**Why**: I/O dominates 264-352x
-**Evidence**: Entry 028 (360 measurements)
-**Critical**: Makes network streaming viable
+### Phase 3: Strategic Expansion (Weeks 10-14)
 
-See OPTIMIZATION_RULES.md for complete implementation details.
+**Deferred pending Phase 1 community feedback**:
+- Format expansion (CRAM, VCF, CSI index)
+- Horizontal expansion (GFF/GTF, BED)
+- Community-driven features
 
 ---
 
-## Error Handling
+## Key Documentation
 
-Always use `Result` types with structured errors:
+### For Users
+- **📘 User Guide**: docs/USER_GUIDE.md - Comprehensive onboarding (installation → optimization)
+- **📓 Tutorials**: notebooks/ - 7 Jupyter notebooks (including BAI indexed queries)
+- **⚡ Performance Guide**: docs/PERFORMANCE_OPTIMIZATION_GUIDE.md - Maximize performance
+- **📊 Benchmarks**: benchmarks/comparison/BENCHMARK_COMPARISON.md - vs samtools/pysam
 
-```rust
-#[derive(Debug, thiserror::Error)]
-pub enum BiometalError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+### For Developers
+- **📐 Architecture**: docs/ARCHITECTURE.md - Technical design
+- **🔬 Optimization Rules**: OPTIMIZATION_RULES.md - Evidence-based optimization (6 rules)
+- **🐍 Python Bindings**: docs/PYTHON.md - Python-specific details
+- **🧬 BAM API**: docs/BAM_API.md - Complete BAM/SAM parser reference
 
-    #[error("Invalid FASTQ format at line {line}: {msg}")]
-    InvalidFormat { line: usize, msg: String },
-
-    #[error("Network error: {0}")]
-    Network(String),
-
-    #[error("Compression error: {0}")]
-    Compression(String),
-}
-
-pub type Result<T> = std::result::Result<T, BiometalError>;
-```
-
-Never use `unwrap()` or `expect()` in library code.
+### For Planning
+- **📈 Phase 1 Progress**: PHASE1_PROGRESS_REPORT.md - Current consolidation status
+- **🗺️ Strategic Analysis**: NEXT_STEPS_ANALYSIS.md - Long-term roadmap (3-phase, 14 weeks)
+- **📝 Changelog**: CHANGELOG.md - Version history
 
 ---
 
-## Common Pitfalls
+## Development Workflow
 
-### 1. Accumulating Records in Memory
-Bad:
-```rust
-let mut records = Vec::new();
-for line in reader.lines() {
-    records.push(parse_record(line)?);
-}
-```
+### Session Guidelines
 
-Good:
-```rust
-for record in FastqStream::from_path(path)? {
-    let record = record?;
-    // Process immediately, no accumulation
-}
-```
-
-### 2. Using unwrap() in Library Code
-Bad:
-```rust
-pub fn operation(input: &[u8]) -> Output {
-    parse(input).unwrap() // Panics on invalid input
-}
-```
-
-Good:
-```rust
-pub fn operation(input: &[u8]) -> Result<Output> {
-    parse(input).map_err(|e| BiometalError::InvalidFormat {
-        line: 0,
-        msg: e.to_string(),
-    })
-}
-```
-
-### 3. Implementing Optimizations Without Evidence
-Bad:
-```rust
-const BLOCK_SIZE: usize = 8_192; // Arbitrary choice
-```
-
-Good:
-```rust
-// Rule 2: Block size from Entry 027 (1,440 measurements)
-const BLOCK_SIZE: usize = 10_000;
-```
-
-### 4. Platform-Specific Code Without Fallback
-Bad:
-```rust
-pub fn operation(input: &[u8]) -> Result {
-    unsafe { operation_neon(input) } // Only works on ARM
-}
-```
-
-Good:
-```rust
-pub fn operation(input: &[u8]) -> Result {
-    #[cfg(target_arch = "aarch64")]
-    { unsafe { operation_neon(input) } }
-
-    #[cfg(not(target_arch = "aarch64"))]
-    { operation_scalar(input) }
-}
-```
-
----
-
-## Session Guidelines
-
-### What to Emphasize
+**What to Emphasize**:
 - Evidence-based design (follow OPTIMIZATION_RULES.md)
 - Streaming-first architecture (constant memory)
 - ARM-native with portable fallback
 - Production quality (error handling, docs, tests)
 
-### What NOT to Do
+**What NOT to Do**:
 - Don't make up optimization parameters (refer to evidence)
 - Don't accumulate records in memory (streaming only)
 - Don't panic in library code (use Result)
 - Don't implement ARM-only code without scalar fallback
 
-### Decision Framework
-
+**Decision Framework**:
 When implementing features:
 1. Check OPTIMIZATION_RULES.md for relevant rule
 2. Follow the implementation pattern for that rule
@@ -309,23 +251,9 @@ When evaluating optimizations:
 2. If yes: Which rule/entry documents it?
 3. If no: Suggest validating first or using proven approach
 
-### Experiments Management
+### Testing Strategy
 
-When research/innovation ideas arise:
-1. Use `experiments/` directory for time-boxed validation
-2. Follow TEMPLATE structure (PROPOSAL, RESEARCH_LOG, FINDINGS)
-3. Clear go/no-go criteria (quantitative thresholds)
-4. Time-box research (typically 2 weeks max)
-5. Document negative results (valuable for community)
-6. Update `.experiments.toml` registry
-
-See: experiments/README.md for full process
-
----
-
-## Testing Strategy
-
-### Property-Based Testing
+**Property-Based Testing**:
 ```rust
 use proptest::prelude::*;
 
@@ -339,52 +267,125 @@ proptest! {
 }
 ```
 
-### Benchmarking
+**Benchmarking**:
 ```rust
 use criterion::{criterion_group, criterion_main, Criterion};
 
-fn bench_base_counting(c: &mut Criterion) {
-    let seq = generate_sequence(100_000);
-    c.bench_function("base_counting_neon", |b| {
-        b.iter(|| count_bases_neon(&seq))
+fn bench_operation(c: &mut Criterion) {
+    let data = generate_test_data(100_000);
+    c.bench_function("operation_neon", |b| {
+        b.iter(|| operation_neon(&data))
     });
 }
 
-criterion_group!(benches, bench_base_counting);
+criterion_group!(benches, bench_operation);
 criterion_main!(benches);
 ```
+
+---
+
+## Performance Expectations
+
+### Current Performance (v1.6.0)
+
+| Operation | Scalar | Optimized | Speedup |
+|-----------|--------|-----------|---------|
+| Base counting | 315 Kseq/s | 5,254 Kseq/s | **16.7× (NEON)** |
+| GC content | 294 Kseq/s | 5,954 Kseq/s | **20.3× (NEON)** |
+| Quality filter | 245 Kseq/s | 6,143 Kseq/s | **25.1× (NEON)** |
+| BAM parsing | ~11 MiB/s | 55.1 MiB/s | **5.0× (BGZF + NEON)** |
+| BAM indexed query | O(n) full scan | O(log n) indexed | **1.68-500× (scales with file size)** |
+
+### Phase 2 Target Performance
+
+| Operation | Current | Phase 2 Target | Improvement |
+|-----------|---------|----------------|-------------|
+| BAM parsing | 55 MiB/s | **895 MiB/s** | **16× (Rules 3+4)** |
+| Memory usage | **5 MB** | **5 MB** | Constant (maintained) |
+| Optimization rules | 4/6 (67%) | **6/6 (100%)** | Complete |
+
+---
+
+## Competitive Position (Validated Week 2)
+
+### vs samtools
+
+| Metric | biometal | samtools | Advantage |
+|--------|----------|----------|-----------|
+| Sequential parsing | 55.1 MiB/s | ~45-50 MiB/s | ✅ Competitive |
+| Indexed queries | 1.68-500× | ~1.2-1.5× | ✅ **Superior** |
+| Memory | **5 MB** | 20-50 MB | ✅ **10× lower** |
+| ARM NEON | **4-25× speedup** | None | ✅ **Exclusive** |
+
+### vs pysam
+
+| Metric | biometal | pysam | Advantage |
+|--------|----------|-------|-----------|
+| Python performance | ~45 MiB/s | ~30-40 MiB/s | ✅ 1.5-2× faster |
+| Memory | **5 MB** | 50 MB-1 GB | ✅ **10-200× lower** |
+| API | Streaming | Context managers | ✅ Simpler |
+| ARM NEON | **4-25× speedup** | None | ✅ **Exclusive** |
+
+**Production Use Cases**:
+- ✅ Large-file targeted analysis (indexed queries)
+- ✅ Memory-constrained environments
+- ✅ ARM infrastructure (Apple Silicon, Graviton)
+- ✅ Terabyte-scale streaming
 
 ---
 
 ## Quick Reference
 
 ### Evidence Base
-- 1,357 experiments, 40,710 measurements (N=30)
+- **1,357 experiments**, 40,710 measurements (N=30)
 - Source: apple-silicon-bio-bench
 - Rules: 6 optimization rules (OPTIMIZATION_RULES.md)
 
 ### Platform Support
-1. **Mac ARM** (M1/M2/M3/M4): 16-25x NEON speedup (optimized)
-2. **Linux ARM** (Graviton): 6-10x NEON speedup (portable)
-3. **x86_64**: 1x scalar fallback (portable)
+1. **Mac ARM** (M1/M2/M3/M4): 16-25× NEON speedup (optimized)
+2. **Linux ARM** (Graviton): 6-10× NEON speedup (portable)
+3. **x86_64**: 1× scalar fallback (portable)
 
-### Key Files
-- `OPTIMIZATION_RULES.md` - 6 evidence-based rules
-- `CHANGELOG.md` - Version history
-- `README.md` - User documentation
-- `experiments/.experiments.toml` - Experiment registry
+### File Formats
+- ✅ FASTQ, FASTA (v1.0.0)
+- ✅ BAM, SAM (v1.4.0)
+- ✅ BAI index (v1.6.0)
+- ⏳ CSI index (partial)
+- ❌ CRAM, VCF, BCF (future)
 
-### Current Focus Areas
-- Python BAM bindings (expose BAM parser to Python - IN PROGRESS)
-- Region queries and filtering (chr:start-end, MAPQ, flags - NEXT)
-- Complete tag parsing (deferred from BAM Phase 1)
-- Community feedback on v1.2.0 Python bindings
-
-### Completed Work
-- ✅ BAM/SAM parser with parallel BGZF (Nov 8, 2025)
-- ✅ 4× speedup achieved, 4.54M records/sec throughput
-- ✅ Production-ready with 70 tests passing
+### Tests
+- **582 passing** (100% pass rate)
+  - 354 library tests
+  - 81 BAM tests
+  - 26 BAI Python tests
+  - 121 documentation tests
 
 ---
 
-**Last Updated**: November 8, 2025 (Post BAM Phase 1-3 Complete, Python bindings in progress)
+## Session Checklist
+
+When starting a new session:
+- [ ] Review current phase status (PHASE1_PROGRESS_REPORT.md)
+- [ ] Check CHANGELOG.md for recent changes
+- [ ] Review relevant optimization rules (OPTIMIZATION_RULES.md)
+- [ ] Check open issues/PRs if community-facing work
+
+When implementing features:
+- [ ] Follow evidence-based design (link to ASBB entry)
+- [ ] Use streaming architecture (constant memory)
+- [ ] Provide ARM + fallback implementations
+- [ ] Add property-based tests
+- [ ] Benchmark with criterion (N=30)
+- [ ] Document with examples
+
+When wrapping up:
+- [ ] Update CHANGELOG.md
+- [ ] Run full test suite
+- [ ] Update relevant planning documents
+- [ ] Document any decisions made
+
+---
+
+**Last Updated**: November 10, 2025 (Post v1.6.0 release, Phase 1 Weeks 1-2 complete)
+**Next Milestone**: Phase 1 Weeks 3-4 (Community Building + Quality Assurance)
+**Long-term Goal**: Phase 2 (Rules 3+4, 16× performance improvement)
