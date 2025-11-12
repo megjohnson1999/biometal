@@ -23,6 +23,7 @@
 //! - `sliding_min`: Sliding window minimum (monotonic deque, O(1) amortized)
 
 pub mod base_counting;
+pub mod block;  // Rule 2: Block-based batch operations (14× speedup)
 pub mod complexity;
 pub mod gc_content;
 pub mod kmer;
