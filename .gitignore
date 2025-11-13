@@ -1,5 +1,6 @@
-# Rust build artifacts
+# Rust build artifacts (catch ALL target directories, including nested)
 /target/
+**/target/
 Cargo.lock
 
 # IDE files
@@ -19,11 +20,24 @@ datasets/
 *.fq.gz
 *.fa
 *.fa.gz
+*.bam
+*.bam.bai
+tests/data/large/
 
 # Benchmark results
 bench_results/
-.venv/
+target/criterion/
 proptest-regressions/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Jupyter notebook outputs
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
 
 # External dependencies (to prevent nested git repos)
 experiments/*/external/
