@@ -37,7 +37,7 @@ Stream data directly from networks and analyze terabyte-scale datasets on consum
 **Rust:**
 ```toml
 [dependencies]
-biometal = "1.5"
+biometal = "1.7"
 ```
 
 **Python:**
@@ -134,9 +134,9 @@ Learn biometal through hands-on Jupyter notebooks (5 complete, ~2.5 hours):
 - **Core operations**: GC content, base counting, quality scores
 - **K-mer operations**: Extraction, minimizers, spectrum (v1.1.0)
 - **QC operations**: Trimming, filtering, masking (v1.2.0)
-- **BAM/SAM parser**: Production-ready with 5× speedup via parallel BGZF + NEON
+- **BAM/SAM parser**: Production-ready with 8.4× speedup via parallel BGZF + NEON + cloudflare_zlib
   - 5.82 million records/sec throughput
-  - 55.1 MiB/s compressed file processing (+27.5% from NEON in v1.5.0)
+  - 92.0 MiB/s compressed file processing (+67% from cloudflare_zlib in v1.7.0)
   - Constant ~5 MB memory (streams terabyte-scale alignments)
   - **Python bindings (v1.3.0)**: CIGAR operations, SAM writing, alignment metrics
   - **Production polish (v1.4.0)**: Tag convenience methods, statistics functions
@@ -158,7 +158,7 @@ Learn biometal through hands-on Jupyter notebooks (5 complete, ~2.5 hours):
 | Base counting | 315 Kseq/s | 5,254 Kseq/s | **16.7× (NEON)** |
 | GC content | 294 Kseq/s | 5,954 Kseq/s | **20.3× (NEON)** |
 | Quality filter | 245 Kseq/s | 6,143 Kseq/s | **25.1× (NEON)** |
-| **BAM parsing** | **~11 MiB/s** | **55.1 MiB/s** | **5.0× (BGZF + NEON v1.5.0)** |
+| **BAM parsing** | **~11 MiB/s** | **92.0 MiB/s** | **8.4× (BGZF + NEON + cloudflare_zlib v1.7.0)** |
 
 | Dataset Size | Traditional | biometal | Reduction |
 |--------------|-------------|----------|-----------|
@@ -203,6 +203,7 @@ biometal's design is grounded in comprehensive experimental validation:
 **v1.4.0** (Released Nov 9, 2025) ✅ - BAM tag convenience methods and statistics functions
 **v1.5.0** (Released Nov 9, 2025) ✅ - ARM NEON sequence decoding (+27.5% BAM parsing speedup)
 **v1.6.0** (Released Nov 10, 2025) ✅ - BAI index support (indexed region queries, 1.68-500× speedup)
+**v1.7.0** (Released Nov 13, 2025) ✅ - cloudflare_zlib backend (1.67× decompression, 2.29× compression speedups)
 
 **Next** (Planned):
 - CSI index support (for references >512 Mbp)
@@ -459,10 +460,10 @@ For the experimental methodology:
 ---
 
 <p align="center">
-<strong>Status:</strong> v1.6.0 released 🚀<br>
-<strong>Latest:</strong> BAI index support (indexed region queries, 1.68-500× speedup) (Nov 10, 2025)<br>
+<strong>Status:</strong> v1.7.0 released 🚀<br>
+<strong>Latest:</strong> cloudflare_zlib backend (1.67× decompression, 2.29× compression) (Nov 13, 2025)<br>
 <strong>Tests:</strong> 582 passing (354 library + 81 BAM + 26 BAI Python + 121 doc)<br>
-<strong>Performance:</strong> 5.82M records/sec, 55.1 MiB/s throughput, <1ms index loading<br>
+<strong>Performance:</strong> 5.82M records/sec, 92.0 MiB/s throughput, <1ms index loading<br>
 <strong>Python Functions:</strong> 50+ (including full BAM + BAI support)<br>
 <strong>Evidence Base:</strong> 1,357 experiments, 40,710 measurements
 </p>

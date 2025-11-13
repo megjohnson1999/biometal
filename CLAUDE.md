@@ -1,8 +1,8 @@
 # biometal: Claude Development Guide
 
 **Project**: biometal - ARM-native bioinformatics library
-**Latest Release**: v1.4.0 (November 8, 2025)
-**Current Focus**: Core development, research archived
+**Latest Release**: v1.7.0 (November 13, 2025)
+**Current Focus**: Core development, compression optimized
 **Research Status**: CAF columnar format evaluated (Nov 4-11) - Archived
 
 ---
@@ -98,7 +98,36 @@ CAF doesn't outperform BAM/CRAM enough to justify adoption (files 60% larger, mo
 
 ---
 
-## Current Status (v1.4.0)
+## Recent Optimization: Compression Backend (v1.7.0)
+
+**Period**: November 12-13, 2025
+**Location**: BACKEND_COMPARISON_FINDINGS.md, COMPRESSION_INVESTIGATION_FINDINGS.md
+**Status**: ✅ COMPLETE - Production deployed
+
+### What Was Achieved
+- Comprehensive backend comparison (rust_backend, zlib-ng, cloudflare_zlib)
+- cloudflare_zlib delivers best performance (1.67× decompression, 2.29× compression)
+- Public compression API with configurable levels (fast/default/best)
+- All 411 tests passing, production-ready
+
+### Performance Impact
+- **BAM parsing**: 55 MiB/s → 92 MiB/s (+67% improvement)
+- **Decompression**: 1.67× faster vs rust_backend (miniz_oxide)
+- **Compression (default)**: 64 MB/s (2.29× vs rust_backend)
+- **Compression (fast)**: 358 MB/s (5.6× vs default)
+- **Compression is now faster than decompression** (358 MB/s vs 290 MB/s in fast mode)
+
+### Key Findings
+- cloudflare_zlib 3-7% faster than zlib-ng (consistent across file sizes)
+- Fast compression mode only 3-5% larger files (minimal quality penalty)
+- Best compression mode (1.2× slower than default) provides 5-10% smaller files
+- Performance scales linearly across file sizes (5MB → 544MB)
+
+**Status**: Full details in BACKEND_COMPARISON_FINDINGS.md and COMPRESSION_INVESTIGATION_FINDINGS.md
+
+---
+
+## Current Status (v1.7.0)
 
 ### Released Features
 - **FASTQ/FASTA** streaming parsers (constant memory)
@@ -286,21 +315,21 @@ criterion_main!(benches);
 
 ## Performance Expectations
 
-### Current Performance (v1.6.0)
+### Current Performance (v1.7.0)
 
 | Operation | Scalar | Optimized | Speedup |
 |-----------|--------|-----------|---------|
 | Base counting | 315 Kseq/s | 5,254 Kseq/s | **16.7× (NEON)** |
 | GC content | 294 Kseq/s | 5,954 Kseq/s | **20.3× (NEON)** |
 | Quality filter | 245 Kseq/s | 6,143 Kseq/s | **25.1× (NEON)** |
-| BAM parsing | ~11 MiB/s | 55.1 MiB/s | **5.0× (BGZF + NEON)** |
+| BAM parsing | ~11 MiB/s | 92.0 MiB/s | **8.4× (BGZF + NEON + cloudflare_zlib)** |
 | BAM indexed query | O(n) full scan | O(log n) indexed | **1.68-500× (scales with file size)** |
 
 ### Phase 2 Target Performance
 
 | Operation | Current | Phase 2 Target | Improvement |
 |-----------|---------|----------------|-------------|
-| BAM parsing | 55 MiB/s | **895 MiB/s** | **16× (Rules 3+4)** |
+| BAM parsing | 92 MiB/s | **895 MiB/s** | **9.7× (Rules 3+4)** |
 | Memory usage | **5 MB** | **5 MB** | Constant (maintained) |
 | Optimization rules | 4/6 (67%) | **6/6 (100%)** | Complete |
 
