@@ -82,12 +82,16 @@ criterion = "0.5"       # Benchmarking
 proptest = "1.4"        # Property-based testing
 wiremock = "0.6"        # HTTP mock server for integration tests
 tempfile = "3.8"        # Temporary files for testing
+rand = "0.8"            # Random data generation for benchmarks
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 # ARM NEON is in std::arch, no external dependency needed
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"            # For madvise on macOS (Rule 4)
+metal = "0.29"          # Metal GPU compute (Apple Silicon only)
+ort = { version = "2.0.0-rc.10", features = ["coreml"], optional = true }  # ONNX Runtime with CoreML/Neural Engine
+ndarray = { version = "0.16", optional = true }  # For ONNX tensor operations
 
 [lib]
 name = "biometal"
@@ -98,6 +102,8 @@ default = ["network"]  # Enable network streaming by default (Rule 6)
 network = ["dep:reqwest", "dep:lru", "dep:tokio", "dep:bytes"]
 python = ["dep:pyo3"]
 simd = ["dep:simd-minimizers", "dep:packed-seq"]  # SIMD-accelerated minimizers (3-15× speedup)
+gpu = []  # GPU-accelerated Smith-Waterman (Metal, macOS only)
+neural-engine = ["dep:ort", "dep:ndarray"]  # Apple Neural Engine ML inference (macOS only)
 # Removed: formats feature (use noodles directly instead)
 
 [[bench]]
@@ -164,6 +170,14 @@ harness = false
 
 [[bench]]
 name = "compression_backends"
+harness = false
+
+[[bench]]
+name = "smith_waterman"
+harness = false
+
+[[bench]]
+name = "neural_engine_quality"
 harness = false
 
 [profile.release]

@@ -38,6 +38,7 @@
 //!
 //! ## Module Organization
 //!
+//! - [`alignment`]: Sequence alignment algorithms (Smith-Waterman with CPU/NEON/GPU)
 //! - [`io`]: Streaming parsers (FASTQ, FASTA, compression, network)
 //! - [`operations`]: ARM NEON-optimized operations
 //! - [`optimization`]: Auto-detection and platform tuning
@@ -45,20 +46,28 @@
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
+pub mod alignment;
 pub mod error;
 pub mod io;
 pub mod operations;
 pub mod optimization;
 pub mod types;
 
+#[cfg(feature = "neural-engine")]
+pub mod ml;
+
 // Python bindings (Week 5-6)
 #[cfg(feature = "python")]
 pub mod python;
 
 // Re-export commonly used types
+pub use alignment::{smith_waterman, Alignment, CigarOp, ScoringMatrix};
 pub use error::{BiometalError, Result};
 pub use io::{FastaStream, FastqStream, FastqWriter, PairedFastqStream};
 pub use types::{FastaRecord, FastqRecord};
+
+#[cfg(feature = "gpu")]
+pub use alignment::{smith_waterman_batch_gpu, smith_waterman_gpu, GpuAlignmentBatch};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

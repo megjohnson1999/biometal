@@ -2,8 +2,8 @@
 
 **Project**: biometal - ARM-native bioinformatics library
 **Latest Release**: v1.7.0 (November 13, 2025)
-**Current Focus**: Core development, compression optimized
-**Research Status**: CAF columnar format evaluated (Nov 4-11) - Archived
+**Current Focus**: Strategic planning - Phase 2 direction TBD (see STRATEGIC_PIVOT_PLAN.md)
+**Research Status**: Apple Silicon archived (Nov 4-13), Rules 3+4 found non-viable (see RULES_3_4_REALITY_CHECK.md)
 
 ---
 
@@ -65,36 +65,60 @@ Platform priority: Mac ARM → Linux ARM (Graviton) → x86_64 fallback
 
 ---
 
-## Recent Research: CAF Columnar Format (Archived)
 
-**Period**: November 4-11, 2025
-**Location**: research/caf-format/implementation/
-**Status**: ✅ Research Complete - Archived
+## Recent Research: Apple Silicon Exploration (Archived)
+
+**Period**: November 4-13, 2025 (2 weeks)
+**Location**: research/apple-silicon/
+**Status**: ✅ Archived - Returning to core roadmap
 
 ### What Was Built
-- Production-quality columnar alignment format (~6,000 lines)
-- BAM ↔ CAF conversion (lossless)
-- Dictionary compression (86% quality score reduction)
-- ARM NEON optimizations (16× base counting speedup)
-- Comprehensive documentation and benchmarks (N=30)
 
-### Key Findings
-- **File size**: 1.6× LARGER than BAM (vs target 0.5-1.0×) ❌
-- **Column-selective reading**: 1.4× speedup (vs predicted 3-5×) ⚠️
-- **NEON effectiveness**: Varies by operation (1.3-16× speedup)
-- **Compiler auto-vec**: Can beat explicit SIMD for simple operations
-- **Research value**: Good methodology, valuable negative results ✅
+**Neural Engine (Week 1)**:
+- ✅ Complete ONNX Runtime + CoreML integration
+- ✅ Quality prediction model (PyTorch → ONNX → CoreML)
+- ❌ Result: 2,940× **slowdown** for streaming use case
+- **Finding**: Neural Engine optimized for batch inference, not per-read streaming
 
-### Verdict
-CAF doesn't outperform BAM/CRAM enough to justify adoption (files 60% larger, modest speedups). Valuable for methodology demonstration and lessons learned. See `research/caf-format/implementation/CAF_FINAL_REPORT.md` for full analysis.
+**GPU Smith-Waterman (Week 2)**:
+- ✅ Metal compute shader (340 lines)
+- ✅ Rust GPU dispatch (430 lines)
+- ✅ All tests passing (430 tests)
+- ⚠️ Result: 1.2-1.4× speedup for batches ≥10
+- **Finding**: Modest gains vs 10-50× from literature (needs anti-diagonal parallelization)
 
-### Lessons Applied to biometal
-1. Profile before assuming SIMD is faster
-2. Data layout significantly affects performance
-3. Benchmark with N=30 for statistical rigor
-4. Document negative results honestly
+### Strategic Decision (November 13, 2025)
 
-**Status**: Archived for reference, returning to biometal core development
+**Decision**: Archive Apple Silicon research
+
+**Rationale**:
+- Apple Silicon (batch-oriented) vs biometal's streaming-first architecture = poor fit
+- Modest results: Neural Engine (2,940× slowdown), GPU (1.2-1.4× speedup)
+- Platform-specific (Mac-only) breaks cross-platform promise
+- **Better path**: Focus on cross-platform, evidence-based features
+
+**Critical Discovery (Same Day)**:
+After archiving Apple Silicon, reviewed OPTIMIZATION_RULES.md and discovered:
+- ❌ Rule 3 (Parallel BGZF): **DISABLED** (0.77-0.84× slowdown, not 6.5× speedup)
+- ⚠️ Rule 4 (Smart mmap): **~1% benefit** (not 2.5×, CPU-bound workload)
+- **Result**: Original Phase 2 plan (Rules 3+4 for 16×) is invalid
+
+**See**: RULES_3_4_REALITY_CHECK.md for full analysis, STRATEGIC_PIVOT_PLAN.md for options
+
+### Lessons Learned
+
+1. **Hardware-software fit matters**: Neural Engine/GPU excel at batch processing, not streaming
+2. **Read documentation carefully**: Summary tables can be outdated, check detailed sections
+3. **Context-dependent optimizations**: Entry 029's 6.5× works for unbounded memory, not streaming
+4. **Platform-specific code has costs**: Breaks portability, smaller user base
+5. **Amdahl's Law applies**: 2.5× I/O speedup on 1.3% of time = ~1% overall
+
+**Value Preserved**:
+- ✅ Infrastructure reusable for future use cases (adapter detection, variant calling)
+- ✅ Code quality demonstrates capabilities (all production-ready)
+- ✅ GPU available via feature flag (`--features gpu`)
+
+**Status**: Archived November 13, 2025. See research/apple-silicon/RESEARCH_SUMMARY.md for full analysis.
 
 ---
 
@@ -152,13 +176,14 @@ CAF doesn't outperform BAM/CRAM enough to justify adoption (files 60% larger, mo
 |------|---------|--------|--------|
 | **Rule 1** | ARM NEON SIMD | ✅ v1.0.0 | 16-25× speedup |
 | **Rule 2** | Block-based processing | ✅ v1.0.0 | Preserves NEON gains |
-| **Rule 3** | Parallel BGZF | ⏳ Phase 2 | 6.5× (planned) |
-| **Rule 4** | Smart mmap | ⏳ Phase 2 | 2.5× (planned) |
+| **Rule 3** | Parallel BGZF | ❌ Disabled | Conflicts with streaming |
+| **Rule 4** | Smart mmap | ⏳ Optional | ~1% for compressed files |
 | **Rule 5** | Constant-memory streaming | ✅ v1.0.0 | 99.5% memory reduction |
 | **Rule 6** | Network streaming | ✅ v1.0.0 | Enables remote analysis |
 
-**Current**: 4/6 rules (67%)
-**Phase 2 Target**: 6/6 rules (100%), 27× combined speedup
+**Current**: 4/6 rules implemented (Rules 1, 2, 5, 6)
+**Rule 3**: Not viable for streaming architecture (see OPTIMIZATION_RULES.md)
+**Rule 4**: Minimal benefit (~1%) for CPU-bound decompression workloads
 
 ### Distribution
 - **PyPI**: biometal-rs v1.4.0 (pip install biometal-rs)
@@ -166,69 +191,69 @@ CAF doesn't outperform BAM/CRAM enough to justify adoption (files 60% larger, mo
 
 ---
 
-## Current Work: Phase 1 Consolidation
 
-### Weeks 1-2: ✅ COMPLETE (November 10, 2025)
+## Current Work: Strategic Planning
 
-**Documentation Sprint (Week 1)**:
-- ✅ User Guide (25,000+ words): docs/USER_GUIDE.md
-- ✅ Performance Guide (10,000+ words): docs/PERFORMANCE_OPTIMIZATION_GUIDE.md
-- ✅ BAI Tutorial (Jupyter): notebooks/07_bai_indexed_queries.ipynb
-- ✅ Enhanced API docs: src/io/bam/index.rs
+**Status**: ⚠️ **PLANNING PHASE** - Phase 2 direction requires decision
 
-**Performance Benchmarking (Week 2)**:
-- ✅ Comprehensive comparison vs samtools/pysam: benchmarks/comparison/BENCHMARK_COMPARISON.md
-- ✅ Validated all v1.6.0 claims (1.68× indexed speedup, 10-200× memory advantage)
-- ✅ Real-world scenario analysis (3 production use cases)
-- ✅ Automated benchmark framework: benchmarks/comparison/samtools_vs_biometal.sh
+**Context**:
+- ✅ Phase 1 (Consolidation) complete - 4 weeks, 23 deliverables
+- ✅ Apple Silicon research complete - Archived (modest results)
+- ❌ Original Phase 2 plan (Rules 3+4) found non-viable
+- ⏳ Strategic direction needed
 
-**Status**: 50% of Phase 1 complete, strong foundation for community launch
+**See**: STRATEGIC_PIVOT_PLAN.md for detailed options
 
-### Weeks 3-4: 🔄 IN PROGRESS
+### What Happened
 
-**Community Building (Week 3)**:
-- [ ] Blog post announcing v1.6.0
-- [ ] Social media campaign (Twitter, Reddit, Biostars, LinkedIn)
-- [ ] Engage with tool maintainers (samtools, pysam, HTSlib)
-- [ ] Set up GitHub discussions and issue templates
+**Phase 1 (✅ COMPLETE)**:
+- Documentation (40,000+ words), benchmarking, community prep, quality assurance
+- Result: Production-ready, competitively validated
 
-**Quality Assurance (Week 4)**:
-- [ ] Property-based testing expansion
-- [ ] Fuzz testing for robustness
-- [ ] Cross-platform validation (Graviton, x86_64)
-- [ ] Memory safety audit (Valgrind, ASAN, Miri)
+**Apple Silicon Exploration (✅ COMPLETE - Archived)**:
+- Neural Engine: 2,940× slowdown (batch-oriented vs streaming mismatch)
+- GPU Smith-Waterman: 1.2-1.4× speedup (modest gains)
+- Result: Archived to research/apple-silicon/
+
+**Rules 3+4 Investigation (✅ COMPLETE - Non-Viable)**:
+- Rule 3 (Parallel BGZF): 0.77-0.84× **slowdown** (conflicts with streaming)
+- Rule 4 (Smart mmap): ~1% benefit (CPU-bound workload, Amdahl's Law)
+- Result: Original Phase 2 plan invalid
+
+### Strategic Options
+
+**See STRATEGIC_PIVOT_PLAN.md for full analysis**. Summary:
+
+**Option 1**: Feature Expansion (CRAM, VCF, CSI, Python) - 12-16 weeks
+**Option 2**: Community Building + Adoption - 6-9 weeks
+**Option 3**: Quality + Optimization Polish (Rule 4 ~1%) - 4-8 weeks
+**Option 4**: Strategic Pause (maintenance mode)
+
+**Recommendation**: Option 1+2 (Feature Expansion + Community)
+
+### Current Performance (v1.7.0)
+
+biometal is **already fast** and **already differentiated**:
+- BAM parsing: 92 MiB/s (competitive with samtools)
+- Indexed queries: 1.68-500× speedup (superior)
+- Memory: Constant 5 MB (10-200× advantage)
+- ARM NEON: 16-25× speedup (exclusive)
+
+**No major performance optimizations remain** - focus on features and adoption.
 
 ---
 
 ## Future Work
 
-### Phase 2: High-ROI Performance (Weeks 5-9)
+**Status**: Pending strategic direction decision
 
-**Objective**: Implement remaining optimization rules for 27× combined speedup
+**Options** (see STRATEGIC_PIVOT_PLAN.md):
+- Format expansion (CRAM, VCF, BCF, CSI)
+- Community building (blog, social media, adoption)
+- Quality assurance (testing, cross-platform validation)
+- Maintenance mode (wait for community feedback)
 
-**Rule 3: Parallel BGZF Decompression** (6.5× speedup)
-- Current: 55 MiB/s
-- Target: 358 MiB/s
-- Effort: 40-60 hours
-- Evidence: Entry 029 (CPU parallel prototype)
-
-**Rule 4: Smart mmap** (2.5× additional)
-- Combined with Rule 3: 895 MiB/s
-- Total: **16× improvement** over current
-- Effort: 40-60 hours
-- Evidence: Entry 032 (scale validation)
-
-**Expected Outcome**:
-- Sequential BAM parsing: 55 MiB/s → **895 MiB/s**
-- All 6 optimization rules implemented (100%)
-- Validated against ASBB experiments
-
-### Phase 3: Strategic Expansion (Weeks 10-14)
-
-**Deferred pending Phase 1 community feedback**:
-- Format expansion (CRAM, VCF, CSI index)
-- Horizontal expansion (GFF/GTF, BED)
-- Community-driven features
+**Decision Required**: Which direction should biometal pursue?
 
 ---
 
@@ -325,13 +350,11 @@ criterion_main!(benches);
 | BAM parsing | ~11 MiB/s | 92.0 MiB/s | **8.4× (BGZF + NEON + cloudflare_zlib)** |
 | BAM indexed query | O(n) full scan | O(log n) indexed | **1.68-500× (scales with file size)** |
 
-### Phase 2 Target Performance
+**Note**: No major performance optimizations remain viable:
+- Rule 3 (Parallel BGZF): Conflicts with streaming architecture (0.77-0.84× slowdown)
+- Rule 4 (Smart mmap): ~1% benefit for CPU-bound decompression
 
-| Operation | Current | Phase 2 Target | Improvement |
-|-----------|---------|----------------|-------------|
-| BAM parsing | 92 MiB/s | **895 MiB/s** | **9.7× (Rules 3+4)** |
-| Memory usage | **5 MB** | **5 MB** | Constant (maintained) |
-| Optimization rules | 4/6 (67%) | **6/6 (100%)** | Complete |
+**Focus**: Feature expansion (CRAM, VCF) and community adoption
 
 ---
 
@@ -415,6 +438,6 @@ When wrapping up:
 
 ---
 
-**Last Updated**: November 10, 2025 (Post v1.6.0 release, Phase 1 Weeks 1-2 complete)
-**Next Milestone**: Phase 1 Weeks 3-4 (Community Building + Quality Assurance)
-**Long-term Goal**: Phase 2 (Rules 3+4, 16× performance improvement)
+**Last Updated**: November 13, 2025 (Phase 1 complete, strategic planning phase)
+**Current Status**: Awaiting Phase 2 direction decision (see STRATEGIC_PIVOT_PLAN.md)
+**Strategic Options**: Feature expansion, community building, or quality polish
