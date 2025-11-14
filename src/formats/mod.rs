@@ -51,13 +51,14 @@
 //! - Format-specific modules:
 //!   - [`bed`]: BED format parser (BED3, BED6, BED12)
 //!   - [`gfa`]: GFA format parser (assembly graphs, pangenomes)
+//!   - [`vcf`]: VCF format parser (genetic variants)
 //! - Coming soon:
-//!   - `vcf`: VCF format parser
 //!   - `gff`: GFF3/GTF format parser
 
 pub mod bed;
 pub mod gfa;
 pub mod primitives;
+pub mod vcf;
 
 // Re-export commonly used types
 pub use primitives::{
