@@ -24,11 +24,14 @@
 
 use thiserror::Error;
 
+pub mod fields;
 pub mod genomic;
+pub mod header;
 pub mod tab_delimited;
 
 // Re-exports
 pub use genomic::{GenomicInterval, Strand};
+pub use header::HeaderParser;
 pub use tab_delimited::{TabDelimitedParser, TabDelimitedRecord};
 
 /// Errors that can occur when parsing bioinformatics formats.

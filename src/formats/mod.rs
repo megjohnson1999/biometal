@@ -58,5 +58,5 @@ pub mod primitives;
 
 // Re-export commonly used types
 pub use primitives::{
-    FormatError, GenomicInterval, Strand, TabDelimitedParser, TabDelimitedRecord,
+    FormatError, GenomicInterval, HeaderParser, Strand, TabDelimitedParser, TabDelimitedRecord,
 };

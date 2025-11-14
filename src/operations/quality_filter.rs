@@ -158,4 +158,50 @@ mod tests {
             assert!((neon - scalar).abs() < 0.1);
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn test_neon_matches_scalar_proptest(quality_values in prop::collection::vec(33u8..127, 0..1000)) {
+                // Property: NEON and scalar implementations must produce identical results
+                // Phred quality scores are ASCII 33-126 (Q=0 to Q=93)
+                let neon_result = unsafe { mean_quality_neon(&quality_values) };
+                let scalar_result = mean_quality_scalar(&quality_values);
+                prop_assert!(
+                    (neon_result - scalar_result).abs() < 0.1,
+                    "NEON and scalar results differ (neon: {}, scalar: {})",
+                    neon_result,
+                    scalar_result
+                );
+            }
+
+            #[test]
+            fn test_mean_quality_range(quality_values in prop::collection::vec(33u8..127, 1..1000)) {
+                // Property: Mean quality must be in [0, 93] (Phred+33 range)
+                let mean_q = mean_quality(&quality_values);
+                prop_assert!(mean_q >= 0.0 && mean_q <= 93.0, "Mean quality must be in [0, 93], got {}", mean_q);
+            }
+
+            #[test]
+            fn test_all_same_quality(q in 33u8..127, n in 1..100usize) {
+                // Property: All same quality values should have mean = that quality
+                let quality_values = vec![q; n];
+                let mean_q = mean_quality(&quality_values);
+                let expected = (q - 33) as f64;
+                prop_assert!((mean_q - expected).abs() < 0.1, "Expected mean {}, got {}", expected, mean_q);
+            }
+
+            #[test]
+            fn test_passes_filter_consistency(quality_values in prop::collection::vec(33u8..127, 1..100), threshold in 0.0..93.0) {
+                // Property: passes_quality_filter should be consistent with mean_quality
+                let mean_q = mean_quality(&quality_values);
+                let passes = passes_quality_filter(&quality_values, threshold);
+                prop_assert_eq!(passes, mean_q >= threshold, "Filter inconsistent with mean quality");
+            }
+        }
+    }
 }

@@ -252,4 +252,49 @@ mod tests {
             );
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn test_neon_matches_scalar_proptest(seq in "[ACGTN]{0,1000}") {
+                // Property: NEON and scalar implementations must produce identical results
+                let neon_result = unsafe { gc_content_neon(seq.as_bytes()) };
+                let scalar_result = gc_content_scalar(seq.as_bytes());
+                prop_assert!(
+                    (neon_result - scalar_result).abs() < 0.0001,
+                    "NEON and scalar results differ for sequence: {} (neon: {}, scalar: {})",
+                    seq,
+                    neon_result,
+                    scalar_result
+                );
+            }
+
+            #[test]
+            fn test_gc_content_range(seq in "[ACGT]{1,1000}") {
+                // Property: GC content must be in [0.0, 1.0]
+                let gc = gc_content(seq.as_bytes());
+                prop_assert!(gc >= 0.0 && gc <= 1.0, "GC content must be in [0.0, 1.0], got {}", gc);
+            }
+
+            #[test]
+            fn test_gc_content_all_gc_property(n in 1..100usize) {
+                // Property: All GC sequences should have GC content = 1.0
+                let seq = "GC".repeat(n);
+                let gc = gc_content(seq.as_bytes());
+                prop_assert!((gc - 1.0).abs() < 0.0001, "All GC sequence should have GC=1.0, got {}", gc);
+            }
+
+            #[test]
+            fn test_gc_content_all_at_property(n in 1..100usize) {
+                // Property: All AT sequences should have GC content = 0.0
+                let seq = "AT".repeat(n);
+                let gc = gc_content(seq.as_bytes());
+                prop_assert!((gc - 0.0).abs() < 0.0001, "All AT sequence should have GC=0.0, got {}", gc);
+            }
+        }
+    }
 }

@@ -209,4 +209,48 @@ mod tests {
             );
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn test_neon_matches_scalar_proptest(seq in "[ACGTN]{0,1000}") {
+                // Property: NEON and scalar implementations must produce identical results
+                let neon_result = unsafe { count_bases_neon(seq.as_bytes()) };
+                let scalar_result = count_bases_scalar(seq.as_bytes());
+                prop_assert_eq!(
+                    neon_result,
+                    scalar_result,
+                    "NEON and scalar results differ for sequence: {}",
+                    seq
+                );
+            }
+
+            #[test]
+            fn test_count_bases_sum_equals_length(seq in "[ACGT]{0,1000}") {
+                // Property: Total count should equal sequence length (excluding N)
+                let counts = count_bases(seq.as_bytes());
+                let total: u32 = counts.iter().sum();
+                prop_assert_eq!(total, seq.len() as u32, "Total count should equal sequence length");
+            }
+
+            #[test]
+            fn test_count_bases_monotonicity(seq in "[ACGT]{0,100}") {
+                // Property: Adding more bases should increase counts
+                let counts1 = count_bases(seq.as_bytes());
+                let extended = format!("{}AAAA", seq);
+                let counts2 = count_bases(extended.as_bytes());
+
+                // A count should increase by 4
+                prop_assert_eq!(counts2[0], counts1[0] + 4, "A count should increase");
+                // Other counts unchanged
+                prop_assert_eq!(counts2[1], counts1[1], "C count should be unchanged");
+                prop_assert_eq!(counts2[2], counts1[2], "G count should be unchanged");
+                prop_assert_eq!(counts2[3], counts1[3], "T count should be unchanged");
+            }
+        }
+    }
 }
