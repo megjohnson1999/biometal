@@ -14,6 +14,10 @@ mod record_ops;
 mod trimming;
 mod masking;
 mod bam;
+mod bed;
+mod gfa;
+mod vcf;
+mod gff;
 
 pub use records::*;
 pub use streams::*;
@@ -24,6 +28,10 @@ pub use record_ops::*;
 pub use trimming::*;
 pub use masking::*;
 pub use bam::*;
+pub use bed::*;
+pub use gfa::*;
+pub use vcf::*;
+pub use gff::*;
 
 /// biometal: ARM-native bioinformatics library
 ///
@@ -61,6 +69,29 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTag>()?;
     m.add_class::<PyTagValue>()?;
     m.add_class::<PySamWriter>()?;
+
+    // Register BED format types
+    m.add_class::<PyBed3Record>()?;
+    m.add_class::<PyBed6Record>()?;
+    m.add_class::<PyBed12Record>()?;
+    m.add_class::<PyBed3Stream>()?;
+    m.add_class::<PyBed6Stream>()?;
+    m.add_class::<PyBed12Stream>()?;
+
+    // Register GFA format types
+    m.add_class::<PyGfaSegment>()?;
+    m.add_class::<PyGfaLink>()?;
+    m.add_class::<PyGfaPath>()?;
+    m.add_class::<PyGfaStream>()?;
+
+    // Register VCF format types
+    m.add_class::<PyVcfHeader>()?;
+    m.add_class::<PyVcfRecord>()?;
+    m.add_class::<PyVcfStream>()?;
+
+    // Register GFF3 format types
+    m.add_class::<PyGff3Record>()?;
+    m.add_class::<PyGff3Stream>()?;
 
     // Register operations
     m.add_function(wrap_pyfunction!(py_gc_content, m)?)?;
