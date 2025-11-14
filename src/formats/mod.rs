@@ -52,11 +52,11 @@
 //!   - [`bed`]: BED format parser (BED3, BED6, BED12)
 //!   - [`gfa`]: GFA format parser (assembly graphs, pangenomes)
 //!   - [`vcf`]: VCF format parser (genetic variants)
-//! - Coming soon:
-//!   - `gff`: GFF3/GTF format parser
+//!   - [`gff`]: GFF3 format parser (gene annotations)
 
 pub mod bed;
 pub mod gfa;
+pub mod gff;
 pub mod primitives;
 pub mod vcf;
 
