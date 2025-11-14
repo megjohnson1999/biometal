@@ -50,12 +50,13 @@
 //!   - Generic parsers, field utilities, genomic types
 //! - Format-specific modules:
 //!   - [`bed`]: BED format parser (BED3, BED6, BED12)
+//!   - [`gfa`]: GFA format parser (assembly graphs, pangenomes)
 //! - Coming soon:
-//!   - `gfa`: GFA format parser
 //!   - `vcf`: VCF format parser
 //!   - `gff`: GFF3/GTF format parser
 
 pub mod bed;
+pub mod gfa;
 pub mod primitives;
 
 // Re-export commonly used types
