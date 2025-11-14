@@ -48,12 +48,14 @@
 //!
 //! - [`primitives`]: Shared infrastructure for tab-delimited formats
 //!   - Generic parsers, field utilities, genomic types
-//! - Format-specific modules (coming soon):
-//!   - `bed`: BED format parser
+//! - Format-specific modules:
+//!   - [`bed`]: BED format parser (BED3, BED6, BED12)
+//! - Coming soon:
 //!   - `gfa`: GFA format parser
 //!   - `vcf`: VCF format parser
 //!   - `gff`: GFF3/GTF format parser
 
+pub mod bed;
 pub mod primitives;
 
 // Re-export commonly used types
