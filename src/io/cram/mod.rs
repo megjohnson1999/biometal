@@ -127,6 +127,9 @@ use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::fs::File;
 
+// ARM NEON optimizations (Phase 3)
+pub mod neon;
+
 // ============================================================================
 // CRAM Container Structures
 // ============================================================================
