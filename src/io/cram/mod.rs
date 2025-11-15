@@ -405,51 +405,540 @@ impl Block {
     }
 }
 
-/// CRAM compression header (simplified for Phase 1).
+/// CRAM data series identifier.
+///
+/// Two-character codes identifying different types of data in CRAM records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DataSeries {
+    /// BAM bit flags
+    BF,
+    /// CRAM bit flags
+    CF,
+    /// Reference ID
+    RI,
+    /// Read lengths
+    RL,
+    /// Alignment start positions
+    AP,
+    /// Read groups
+    RG,
+    /// Read names
+    RN,
+    /// Next fragment reference ID
+    NF,
+    /// Next mate bit flags
+    MF,
+    /// Next fragment alignment start
+    NS,
+    /// Next fragment alignment end
+    NP,
+    /// Template size
+    TS,
+    /// Tag count
+    TC,
+    /// Tag names list ID
+    TL,
+    /// Number of read features
+    FN,
+    /// Feature codes
+    FC,
+    /// In-seq positions
+    FP,
+    /// Deletion lengths
+    DL,
+    /// Bases (for unmapped reads)
+    BA,
+    /// Base substitution codes
+    BS,
+    /// Insertion sequences
+    IN,
+    /// Reference skip length
+    RS,
+    /// Soft clip sequences
+    SC,
+    /// Hard clip lengths
+    HC,
+    /// Padding lengths
+    PD,
+    /// Quality scores
+    QS,
+    /// Mapping qualities
+    MQ,
+    /// Unknown data series (raw bytes)
+    Unknown([u8; 2]),
+}
+
+impl DataSeries {
+    fn from_bytes(bytes: [u8; 2]) -> Self {
+        match &bytes {
+            b"BF" => Self::BF,
+            b"CF" => Self::CF,
+            b"RI" => Self::RI,
+            b"RL" => Self::RL,
+            b"AP" => Self::AP,
+            b"RG" => Self::RG,
+            b"RN" => Self::RN,
+            b"NF" => Self::NF,
+            b"MF" => Self::MF,
+            b"NS" => Self::NS,
+            b"NP" => Self::NP,
+            b"TS" => Self::TS,
+            b"TC" => Self::TC,
+            b"TL" => Self::TL,
+            b"FN" => Self::FN,
+            b"FC" => Self::FC,
+            b"FP" => Self::FP,
+            b"DL" => Self::DL,
+            b"BA" => Self::BA,
+            b"BS" => Self::BS,
+            b"IN" => Self::IN,
+            b"RS" => Self::RS,
+            b"SC" => Self::SC,
+            b"HC" => Self::HC,
+            b"PD" => Self::PD,
+            b"QS" => Self::QS,
+            b"MQ" => Self::MQ,
+            _ => Self::Unknown(bytes),
+        }
+    }
+}
+
+/// CRAM encoding specification.
+///
+/// Describes how a data series is encoded in CRAM blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Encoding {
+    /// NULL encoding (no data)
+    Null,
+    /// External encoding (data in external block)
+    External { block_content_id: i32 },
+    /// Huffman encoding with code table
+    Huffman {
+        alphabet: Vec<i32>,
+        bit_lengths: Vec<i32>,
+    },
+    /// Byte array with length prefix
+    ByteArrayLen {
+        len_encoding: Box<Encoding>,
+        value_encoding: Box<Encoding>,
+    },
+    /// Byte array with stop byte
+    ByteArrayStop {
+        stop_byte: u8,
+        block_content_id: i32,
+    },
+    /// Beta encoding (offset + length)
+    Beta { offset: i32, length: i32 },
+    /// Subexponential encoding
+    SubExp { offset: i32, k: i32 },
+    /// Golomb encoding
+    Golomb { offset: i32, m: i32 },
+    /// Golomb-Rice encoding
+    GolombRice { offset: i32, log2_m: i32 },
+    /// Gamma encoding
+    Gamma { offset: i32 },
+    /// Delta encoding
+    Delta { offset: i32, k: i32 },
+}
+
+impl Encoding {
+    /// Parse encoding from bytes.
+    fn parse<R: Read>(reader: &mut R) -> Result<Self> {
+        let encoding_id = {
+            let mut buf = [0u8; 1];
+            reader.read_exact(&mut buf)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read encoding ID: {}", e)
+                })?;
+            buf[0]
+        };
+
+        match encoding_id {
+            0 => Ok(Self::Null),
+            1 => {
+                // EXTERNAL: ITF-8 block_content_id
+                let block_content_id = decode_itf8(reader)?;
+                Ok(Self::External { block_content_id })
+            }
+            2 => {
+                // GOLOMB: ITF-8 offset, ITF-8 M
+                let offset = decode_itf8(reader)?;
+                let m = decode_itf8(reader)?;
+                Ok(Self::Golomb { offset, m })
+            }
+            3 => {
+                // HUFFMAN: ITF-8 alphabet_size, ITF-8[] alphabet, ITF-8[] bit_lengths
+                let alphabet_size = decode_itf8(reader)?;
+                let mut alphabet = Vec::with_capacity(alphabet_size as usize);
+                for _ in 0..alphabet_size {
+                    alphabet.push(decode_itf8(reader)?);
+                }
+                let mut bit_lengths = Vec::with_capacity(alphabet_size as usize);
+                for _ in 0..alphabet_size {
+                    bit_lengths.push(decode_itf8(reader)?);
+                }
+                Ok(Self::Huffman {
+                    alphabet,
+                    bit_lengths,
+                })
+            }
+            4 => {
+                // BYTE_ARRAY_LEN: Encoding (len), Encoding (value)
+                let len_encoding = Box::new(Self::parse(reader)?);
+                let value_encoding = Box::new(Self::parse(reader)?);
+                Ok(Self::ByteArrayLen {
+                    len_encoding,
+                    value_encoding,
+                })
+            }
+            5 => {
+                // BYTE_ARRAY_STOP: u8 stop_byte, ITF-8 block_content_id
+                let mut buf = [0u8; 1];
+                reader.read_exact(&mut buf)
+                    .map_err(|e| BiometalError::InvalidCramFormat {
+                        msg: format!("Failed to read stop byte: {}", e)
+                    })?;
+                let stop_byte = buf[0];
+                let block_content_id = decode_itf8(reader)?;
+                Ok(Self::ByteArrayStop {
+                    stop_byte,
+                    block_content_id,
+                })
+            }
+            6 => {
+                // BETA: ITF-8 offset, ITF-8 length
+                let offset = decode_itf8(reader)?;
+                let length = decode_itf8(reader)?;
+                Ok(Self::Beta { offset, length })
+            }
+            7 => {
+                // SUBEXP: ITF-8 offset, ITF-8 K
+                let offset = decode_itf8(reader)?;
+                let k = decode_itf8(reader)?;
+                Ok(Self::SubExp { offset, k })
+            }
+            8 => {
+                // GOLOMB_RICE: ITF-8 offset, ITF-8 log2_M
+                let offset = decode_itf8(reader)?;
+                let log2_m = decode_itf8(reader)?;
+                Ok(Self::GolombRice { offset, log2_m })
+            }
+            9 => {
+                // GAMMA: ITF-8 offset
+                let offset = decode_itf8(reader)?;
+                Ok(Self::Gamma { offset })
+            }
+            _ => Err(BiometalError::InvalidCramFormat {
+                msg: format!("Unknown encoding ID: {}", encoding_id),
+            }),
+        }
+    }
+
+    /// Decode a single integer value using this encoding.
+    ///
+    /// **Phase 2 Full - Partial Implementation**:
+    /// Currently only EXTERNAL encoding is implemented. Other encodings (HUFFMAN, BETA, GAMMA, etc.)
+    /// require bit-level reading infrastructure and will be implemented in the next iteration.
+    ///
+    /// # Arguments
+    /// * `blocks` - Map of block_content_id -> block data
+    /// * `block_positions` - Current read position in each block
+    ///
+    /// # Returns
+    /// Decoded integer value
+    pub fn decode_int(
+        &self,
+        blocks: &std::collections::HashMap<i32, &[u8]>,
+        block_positions: &mut std::collections::HashMap<i32, usize>,
+    ) -> Result<i32> {
+        match self {
+            Self::Null => Ok(0),
+            Self::External { block_content_id } => {
+                // Read ITF-8 from external block
+                let block_data = blocks.get(block_content_id)
+                    .ok_or_else(|| BiometalError::InvalidCramFormat {
+                        msg: format!("External block {} not found", block_content_id)
+                    })?;
+
+                let pos = block_positions.get(block_content_id).copied().unwrap_or(0);
+                let mut reader = std::io::Cursor::new(&block_data[pos..]);
+                let value = decode_itf8(&mut reader)?;
+                let new_pos = pos + (reader.position() as usize);
+                block_positions.insert(*block_content_id, new_pos);
+
+                Ok(value)
+            }
+            _ => {
+                // Other encodings require bit-level reading, deferred to next iteration
+                Err(BiometalError::InvalidCramFormat {
+                    msg: format!("Encoding {:?} not yet implemented (requires bit-level reader)", self)
+                })
+            }
+        }
+    }
+
+    /// Decode a single byte using this encoding.
+    pub fn decode_byte(
+        &self,
+        blocks: &std::collections::HashMap<i32, &[u8]>,
+        block_positions: &mut std::collections::HashMap<i32, usize>,
+    ) -> Result<u8> {
+        match self {
+            Self::Null => Ok(0),
+            Self::External { block_content_id } => {
+                // Read single byte from external block
+                let block_data = blocks.get(block_content_id)
+                    .ok_or_else(|| BiometalError::InvalidCramFormat {
+                        msg: format!("External block {} not found", block_content_id)
+                    })?;
+
+                let pos = block_positions.get(block_content_id).copied().unwrap_or(0);
+                if pos >= block_data.len() {
+                    return Err(BiometalError::InvalidCramFormat {
+                        msg: format!("Attempted to read past end of block {}", block_content_id)
+                    });
+                }
+
+                let value = block_data[pos];
+                block_positions.insert(*block_content_id, pos + 1);
+
+                Ok(value)
+            }
+            _ => {
+                Err(BiometalError::InvalidCramFormat {
+                    msg: format!("Encoding {:?} not yet implemented", self)
+                })
+            }
+        }
+    }
+
+    /// Decode a byte array using this encoding.
+    pub fn decode_byte_array(
+        &self,
+        blocks: &std::collections::HashMap<i32, &[u8]>,
+        block_positions: &mut std::collections::HashMap<i32, usize>,
+    ) -> Result<Vec<u8>> {
+        match self {
+            Self::Null => Ok(Vec::new()),
+            Self::ByteArrayLen { len_encoding, value_encoding } => {
+                // Decode length, then decode that many values
+                let len = len_encoding.decode_int(blocks, block_positions)? as usize;
+                let mut result = Vec::with_capacity(len);
+                for _ in 0..len {
+                    result.push(value_encoding.decode_byte(blocks, block_positions)?);
+                }
+                Ok(result)
+            }
+            Self::ByteArrayStop { stop_byte, block_content_id } => {
+                // Read until stop byte encountered
+                let block_data = blocks.get(block_content_id)
+                    .ok_or_else(|| BiometalError::InvalidCramFormat {
+                        msg: format!("External block {} not found", block_content_id)
+                    })?;
+
+                let pos = block_positions.get(block_content_id).copied().unwrap_or(0);
+                let mut result = Vec::new();
+                let mut current_pos = pos;
+
+                while current_pos < block_data.len() {
+                    let byte = block_data[current_pos];
+                    current_pos += 1;
+                    if byte == *stop_byte {
+                        break;
+                    }
+                    result.push(byte);
+                }
+
+                block_positions.insert(*block_content_id, current_pos);
+                Ok(result)
+            }
+            _ => {
+                Err(BiometalError::InvalidCramFormat {
+                    msg: format!("Encoding {:?} not suitable for byte arrays", self)
+                })
+            }
+        }
+    }
+}
+
+/// CRAM preservation map.
+///
+/// Stores preservation policy settings for the container.
+#[derive(Debug, Clone, Default)]
+pub struct PreservationMap {
+    /// Read names stored (RN)
+    pub read_names_included: bool,
+    /// AP data series delta (AP)
+    pub ap_data_series_delta: bool,
+    /// Reference required (RR)
+    pub reference_required: bool,
+    /// Substitution matrix (SM): 5-byte matrix
+    pub substitution_matrix: Option<[u8; 5]>,
+    /// Tag ID dictionary (TD): tag names
+    pub tag_ids: Vec<[u8; 3]>,
+}
+
+impl PreservationMap {
+    /// Parse preservation map from bytes.
+    fn parse(data: &[u8]) -> Result<Self> {
+        use std::io::Cursor;
+        let mut reader = Cursor::new(data);
+        let mut map = Self::default();
+
+        // Read map size (number of entries)
+        let map_size = decode_itf8(&mut reader)?;
+
+        for _ in 0..map_size {
+            // Read 2-byte key
+            let mut key = [0u8; 2];
+            reader.read_exact(&mut key)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read preservation map key: {}", e)
+                })?;
+
+            match &key {
+                b"RN" => {
+                    // Boolean: read names included
+                    let mut buf = [0u8; 1];
+                    reader.read_exact(&mut buf)
+                        .map_err(|e| BiometalError::InvalidCramFormat {
+                            msg: format!("Failed to read RN value: {}", e)
+                        })?;
+                    map.read_names_included = buf[0] != 0;
+                }
+                b"AP" => {
+                    // Boolean: AP data series delta
+                    let mut buf = [0u8; 1];
+                    reader.read_exact(&mut buf)
+                        .map_err(|e| BiometalError::InvalidCramFormat {
+                            msg: format!("Failed to read AP value: {}", e)
+                        })?;
+                    map.ap_data_series_delta = buf[0] != 0;
+                }
+                b"RR" => {
+                    // Boolean: reference required
+                    let mut buf = [0u8; 1];
+                    reader.read_exact(&mut buf)
+                        .map_err(|e| BiometalError::InvalidCramFormat {
+                            msg: format!("Failed to read RR value: {}", e)
+                        })?;
+                    map.reference_required = buf[0] != 0;
+                }
+                b"SM" => {
+                    // Substitution matrix: 5 bytes
+                    let mut matrix = [0u8; 5];
+                    reader.read_exact(&mut matrix)
+                        .map_err(|e| BiometalError::InvalidCramFormat {
+                            msg: format!("Failed to read SM value: {}", e)
+                        })?;
+                    map.substitution_matrix = Some(matrix);
+                }
+                b"TD" => {
+                    // Tag IDs: array of 3-byte tag names
+                    let num_tags = decode_itf8(&mut reader)?;
+                    for _ in 0..num_tags {
+                        let mut tag = [0u8; 3];
+                        reader.read_exact(&mut tag)
+                            .map_err(|e| BiometalError::InvalidCramFormat {
+                                msg: format!("Failed to read tag ID: {}", e)
+                            })?;
+                        map.tag_ids.push(tag);
+                    }
+                }
+                _ => {
+                    // Unknown key - skip the value
+                    // Value length is not standardized, so we can't safely skip
+                    // For now, return an error
+                    return Err(BiometalError::InvalidCramFormat {
+                        msg: format!(
+                            "Unknown preservation map key: {}{}",
+                            key[0] as char, key[1] as char
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(map)
+    }
+}
+
+/// CRAM compression header.
 ///
 /// The compression header describes how data is encoded in the container.
-/// For Phase 1, we'll parse the basic structure but skip detailed encoding maps.
 #[derive(Debug, Clone)]
 pub struct CompressionHeader {
-    /// Preservation map (raw bytes, parsed in Phase 2)
-    pub preservation_map: Vec<u8>,
-    /// Data series encoding map (raw bytes, parsed in Phase 2)
-    pub data_series_encoding: Vec<u8>,
-    /// Tag encoding map (raw bytes, parsed in Phase 2)
-    pub tag_encoding: Vec<u8>,
+    /// Preservation map
+    pub preservation_map: PreservationMap,
+    /// Data series encoding map
+    pub data_series_encoding: std::collections::HashMap<DataSeries, Encoding>,
+    /// Tag encoding map (tag_id -> encoding)
+    pub tag_encoding: std::collections::HashMap<i32, Encoding>,
 }
 
 impl CompressionHeader {
     /// Parse compression header from decompressed block data.
     ///
-    /// For Phase 1, we'll store the raw bytes and defer detailed parsing to Phase 2.
+    /// **Phase 2 Full**: Parses preservation map, data series encoding, and tag encoding.
+    ///
+    /// **Remaining Work**:
+    /// - Implement actual data decoders (EXTERNAL, HUFFMAN, etc.) - see next task
+    /// - Decode CRAM features using the encoding map
+    /// - Apply features to reference sequences
     pub fn parse(data: &[u8]) -> Result<Self> {
         use std::io::Cursor;
         let mut reader = Cursor::new(data);
 
-        // For Phase 1: Read preservation map size and skip
+        // Parse preservation map
         let preservation_map_size = decode_itf8(&mut reader)?;
-        let mut preservation_map = vec![0u8; preservation_map_size as usize];
-        reader.read_exact(&mut preservation_map)
+        let mut preservation_map_data = vec![0u8; preservation_map_size as usize];
+        reader.read_exact(&mut preservation_map_data)
             .map_err(|e| BiometalError::InvalidCramFormat {
                 msg: format!("Failed to read preservation map: {}", e)
             })?;
+        let preservation_map = PreservationMap::parse(&preservation_map_data)?;
 
-        // Read data series encoding map size and skip
+        // Parse data series encoding map
         let data_series_size = decode_itf8(&mut reader)?;
-        let mut data_series_encoding = vec![0u8; data_series_size as usize];
-        reader.read_exact(&mut data_series_encoding)
-            .map_err(|e| BiometalError::InvalidCramFormat {
-                msg: format!("Failed to read data series encoding: {}", e)
-            })?;
+        let mut data_series_encoding = std::collections::HashMap::new();
+        let data_series_start = reader.position() as usize;
+        let data_series_end = data_series_start + data_series_size as usize;
 
-        // Read tag encoding map size and skip
+        let mut data_series_reader = Cursor::new(&data[data_series_start..data_series_end]);
+        let num_data_series = decode_itf8(&mut data_series_reader)?;
+
+        for _ in 0..num_data_series {
+            // Read 2-byte data series key
+            let mut key = [0u8; 2];
+            data_series_reader.read_exact(&mut key)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read data series key: {}", e)
+                })?;
+
+            // Parse encoding for this data series
+            let encoding = Encoding::parse(&mut data_series_reader)?;
+            data_series_encoding.insert(DataSeries::from_bytes(key), encoding);
+        }
+
+        reader.set_position((data_series_end) as u64);
+
+        // Parse tag encoding map
         let tag_encoding_size = decode_itf8(&mut reader)?;
-        let mut tag_encoding = vec![0u8; tag_encoding_size as usize];
-        reader.read_exact(&mut tag_encoding)
-            .map_err(|e| BiometalError::InvalidCramFormat {
-                msg: format!("Failed to read tag encoding: {}", e)
-            })?;
+        let mut tag_encoding = std::collections::HashMap::new();
+        let tag_encoding_start = reader.position() as usize;
+        let tag_encoding_end = tag_encoding_start + tag_encoding_size as usize;
+
+        let mut tag_reader = Cursor::new(&data[tag_encoding_start..tag_encoding_end]);
+        let num_tags = decode_itf8(&mut tag_reader)?;
+
+        for _ in 0..num_tags {
+            // Read tag ID (ITF-8)
+            let tag_id = decode_itf8(&mut tag_reader)?;
+
+            // Parse encoding for this tag
+            let encoding = Encoding::parse(&mut tag_reader)?;
+            tag_encoding.insert(tag_id, encoding);
+        }
 
         Ok(CompressionHeader {
             preservation_map,
@@ -596,12 +1085,47 @@ impl Slice {
 
     /// Decode sequence from slice blocks.
     ///
-    /// **Phase 2 Implementation**: Basic reference-based reconstruction
+    /// **Phase 2 Status**: Basic reference-based reconstruction (simplified)
     ///
-    /// This is a simplified implementation that:
-    /// - Fetches reference sequence if available
-    /// - Returns placeholder if no reference
-    /// - TODO Phase 2: Decode actual CRAM features (substitutions, insertions, deletions)
+    /// **Current Implementation**:
+    /// - Fetches reference subsequence for alignment span
+    /// - Returns empty placeholder if no reference available
+    ///
+    /// **Phase 2 Full TODO** (10-15 hours):
+    /// 1. Parse compression header to get encoding schemes for:
+    ///    - FC: Feature codes (what kind of variation)
+    ///    - FP: Feature positions (where in the read)
+    ///    - BS: Base substitutions (what base to substitute)
+    ///    - IN: Insertion bases (what bases to insert)
+    ///    - DL: Deletion lengths (how many bases to delete)
+    ///    - BA: Bases (for unmapped reads)
+    ///    - QS: Quality scores
+    ///
+    /// 2. Read from core block and external blocks:
+    ///    - Decode feature count for this record
+    ///    - For each feature, decode: code, position, base/length
+    ///
+    /// 3. Apply features to reference sequence:
+    ///    ```rust
+    ///    let mut sequence = reference_sequence.clone();
+    ///    for feature in features {
+    ///        match feature.code {
+    ///            'B' => sequence[feature.pos] = feature.base,  // Substitution
+    ///            'I' => sequence.splice(feature.pos..feature.pos, feature.bases),  // Insertion
+    ///            'D' => sequence.drain(feature.pos..feature.pos+feature.len),  // Deletion
+    ///            'S' => /* Soft clip */,
+    ///            // ... other feature types
+    ///        }
+    ///    }
+    ///    ```
+    ///
+    /// 4. Handle unmapped reads:
+    ///    - Read bases directly from BA data series
+    ///    - No reference sequence needed
+    ///
+    /// 5. Build CIGAR from features:
+    ///    - Track match/mismatch runs
+    ///    - Convert insertions/deletions to CIGAR ops
     ///
     /// # Arguments
     ///
@@ -1991,42 +2515,80 @@ mod tests {
         // Create minimal compression header data
         let mut data = Vec::new();
 
-        // Preservation map size = 0 (simplified)
-        data.push(0x00);
+        // Preservation map: size = 1 byte, containing num_entries = 0
+        data.push(0x01); // size = 1 byte
+        data.push(0x00); // num entries = 0 (ITF-8)
 
-        // Data series encoding size = 0 (simplified)
-        data.push(0x00);
+        // Data series encoding: size = 1 byte, containing num_entries = 0
+        data.push(0x01); // size = 1 byte
+        data.push(0x00); // num entries = 0 (ITF-8)
 
-        // Tag encoding size = 0 (simplified)
-        data.push(0x00);
+        // Tag encoding: size = 1 byte, containing num_entries = 0
+        data.push(0x01); // size = 1 byte
+        data.push(0x00); // num entries = 0 (ITF-8)
 
         let header = super::CompressionHeader::parse(&data).unwrap();
-        assert_eq!(header.preservation_map.len(), 0);
+        // Check preservation map is default (empty)
+        assert!(!header.preservation_map.read_names_included);
+        assert!(!header.preservation_map.ap_data_series_delta);
+        assert!(!header.preservation_map.reference_required);
+        assert!(header.preservation_map.substitution_matrix.is_none());
+        assert_eq!(header.preservation_map.tag_ids.len(), 0);
+
+        // Check encoding maps are empty
         assert_eq!(header.data_series_encoding.len(), 0);
         assert_eq!(header.tag_encoding.len(), 0);
     }
 
     #[test]
     fn test_compression_header_with_data() {
-        // Create compression header with some data
+        // Create a valid compression header with preservation map, data series encoding, and tag encoding
         let mut data = Vec::new();
 
-        // Preservation map: 3 bytes
-        data.push(0x03);
-        data.extend_from_slice(&[0x01, 0x02, 0x03]);
+        // Preservation map: 1 entry (RN: true)
+        data.push(0x04); // size = 4 bytes (1 for num_entries + 2 for key + 1 for value)
+        data.push(0x01); // num entries = 1 (ITF-8)
+        data.extend_from_slice(b"RN"); // key
+        data.push(0x01); // value = true
 
-        // Data series encoding: 2 bytes
-        data.push(0x02);
-        data.extend_from_slice(&[0x04, 0x05]);
+        // Data series encoding: 1 entry (BF: External block 1)
+        data.push(0x05); // size = 5 bytes (1 for num_entries + 2 for key + 1 for encoding_id + 1 for block_id)
+        data.push(0x01); // num entries = 1 (ITF-8)
+        data.extend_from_slice(b"BF"); // key = BAM flags
+        data.push(0x01); // encoding ID = EXTERNAL
+        data.push(0x01); // block_content_id = 1 (ITF-8)
 
-        // Tag encoding: 1 byte
-        data.push(0x01);
-        data.push(0x06);
+        // Tag encoding: 1 entry (tag 100: External block 2)
+        data.push(0x04); // size = 4 bytes (1 for num_entries + 1 for tag_id + 1 for encoding_id + 1 for block_id)
+        data.push(0x01); // num entries = 1 (ITF-8)
+        data.push(0x64); // tag ID = 100 (ITF-8)
+        data.push(0x01); // encoding ID = EXTERNAL
+        data.push(0x02); // block_content_id = 2 (ITF-8)
 
         let header = super::CompressionHeader::parse(&data).unwrap();
-        assert_eq!(header.preservation_map, vec![0x01, 0x02, 0x03]);
-        assert_eq!(header.data_series_encoding, vec![0x04, 0x05]);
-        assert_eq!(header.tag_encoding, vec![0x06]);
+
+        // Check preservation map
+        assert!(header.preservation_map.read_names_included);
+        assert!(!header.preservation_map.ap_data_series_delta);
+        assert!(!header.preservation_map.reference_required);
+
+        // Check data series encoding
+        assert_eq!(header.data_series_encoding.len(), 1);
+        assert!(header.data_series_encoding.contains_key(&super::DataSeries::BF));
+        if let Some(super::Encoding::External { block_content_id }) = header.data_series_encoding.get(&super::DataSeries::BF) {
+            assert_eq!(*block_content_id, 1);
+        } else {
+            panic!("Expected External encoding for BF");
+        }
+
+        // Check tag encoding
+        assert_eq!(header.tag_encoding.len(), 1);
+        assert!(header.tag_encoding.contains_key(&100));
+        if let Some(super::Encoding::External { block_content_id }) = header.tag_encoding.get(&100) {
+            assert_eq!(*block_content_id, 2);
+        } else {
+            panic!("Expected External encoding for tag 100");
+        }
     }
 
     // ========================================================================
