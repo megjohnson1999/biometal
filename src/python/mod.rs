@@ -18,6 +18,8 @@ mod bed;
 mod gfa;
 mod vcf;
 mod gff;
+mod gtf;
+mod paf;
 mod fasta;
 mod tbi;
 
@@ -34,6 +36,8 @@ pub use bed::*;
 pub use gfa::*;
 pub use vcf::*;
 pub use gff::*;
+pub use gtf::*;
+pub use paf::*;
 pub use fasta::*;
 pub use tbi::*;
 
@@ -81,6 +85,8 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBed3Stream>()?;
     m.add_class::<PyBed6Stream>()?;
     m.add_class::<PyBed12Stream>()?;
+    m.add_class::<PyNarrowPeakRecord>()?;
+    m.add_class::<PyNarrowPeakStream>()?;
 
     // Register GFA format types
     m.add_class::<PyGfaSegment>()?;
@@ -96,6 +102,14 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register GFF3 format types
     m.add_class::<PyGff3Record>()?;
     m.add_class::<PyGff3Stream>()?;
+
+    // Register GTF format types
+    m.add_class::<PyGtfRecord>()?;
+    m.add_class::<PyGtfStream>()?;
+
+    // Register PAF format types
+    m.add_class::<PyPafRecord>()?;
+    m.add_class::<PyPafStream>()?;
 
     // Register FASTA index
     m.add_class::<PyFaiIndex>()?;

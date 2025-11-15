@@ -28,8 +28,8 @@
 //!
 //! The corresponding FAI index:
 //! ```text
-//! chr1	44	6	28	29
-//! chr2	16	81	16	17
+//! chr1    44    6    28    29
+//! chr2    16    81    16    17
 //! ```
 //!
 //! # Basic Usage

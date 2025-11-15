@@ -1,7 +1,7 @@
 //! Python wrappers for BED format records
 
 use pyo3::prelude::*;
-use crate::formats::bed::{Bed3Record, Bed6Record, Bed12Record};
+use crate::formats::bed::{Bed3Record, Bed6Record, Bed12Record, NarrowPeakRecord};
 use crate::formats::primitives::Strand;
 use crate::formats::{TabDelimitedRecord, TabDelimitedParser};
 use std::fs::File;
@@ -471,5 +471,195 @@ impl PyBed12Stream {
 
     fn __repr__(&self) -> String {
         "Bed12Stream(...)".to_string()
+    }
+}
+
+/// narrowPeak record (ENCODE ChIP-seq peaks)
+///
+/// BED6+4 format for called peaks of signal enrichment from ChIP-seq data.
+/// Extends BED6 with peak-calling statistics.
+///
+/// Attributes:
+///     chrom (str): Chromosome name
+///     start (int): Start position (0-based, inclusive)
+///     end (int): End position (0-based, exclusive)
+///     name (str | None): Peak identifier
+///     score (int | None): Score (0-1000)
+///     strand (str | None): Strand (+/-)
+///     signal_value (float): Overall enrichment measurement
+///     p_value (float): Statistical significance as -log10 (-1 if unavailable)
+///     q_value (float): FDR significance as -log10 (-1 if unavailable)
+///     peak (int | None): Offset from start to peak summit (None if -1)
+///
+/// Example:
+///     >>> record = NarrowPeakRecord.from_line("chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450")
+///     >>> print(f"{record.name}: signal={record.signal_value}, summit={record.peak_position()}")
+///     peak1: signal=12.5, summit=1450
+#[pyclass(name = "NarrowPeakRecord")]
+#[derive(Clone)]
+pub struct PyNarrowPeakRecord {
+    inner: NarrowPeakRecord,
+}
+
+#[pymethods]
+impl PyNarrowPeakRecord {
+    #[staticmethod]
+    fn from_line(line: &str) -> PyResult<Self> {
+        let record = NarrowPeakRecord::from_line(line)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        Ok(record.into())
+    }
+
+    // Property getters
+    #[getter]
+    fn chrom(&self) -> &str {
+        &self.inner.bed6.bed3.interval.chrom
+    }
+
+    #[getter]
+    fn start(&self) -> u64 {
+        self.inner.bed6.bed3.interval.start
+    }
+
+    #[getter]
+    fn end(&self) -> u64 {
+        self.inner.bed6.bed3.interval.end
+    }
+
+    #[getter]
+    fn name(&self) -> Option<String> {
+        self.inner.bed6.name.clone()
+    }
+
+    #[getter]
+    fn score(&self) -> Option<u32> {
+        self.inner.bed6.score
+    }
+
+    #[getter]
+    fn strand(&self) -> Option<String> {
+        self.inner.bed6.strand.as_ref().map(|s| s.to_string())
+    }
+
+    #[getter]
+    fn signal_value(&self) -> f64 {
+        self.inner.signal_value
+    }
+
+    #[getter]
+    fn p_value(&self) -> f64 {
+        self.inner.p_value
+    }
+
+    #[getter]
+    fn q_value(&self) -> f64 {
+        self.inner.q_value
+    }
+
+    #[getter]
+    fn peak(&self) -> Option<i32> {
+        self.inner.peak
+    }
+
+    fn to_line(&self) -> String {
+        self.inner.to_line()
+    }
+
+    fn length(&self) -> u64 {
+        self.inner.bed6.bed3.interval.end - self.inner.bed6.bed3.interval.start
+    }
+
+    fn peak_position(&self) -> Option<u64> {
+        self.inner.peak_position()
+    }
+
+    fn is_significant(&self, p_threshold: f64, q_threshold: f64) -> bool {
+        self.inner.is_significant(p_threshold, q_threshold)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NarrowPeakRecord(chrom='{}', start={}, end={}, signal={})",
+            self.inner.bed6.bed3.interval.chrom,
+            self.inner.bed6.bed3.interval.start,
+            self.inner.bed6.bed3.interval.end,
+            self.inner.signal_value
+        )
+    }
+
+    fn __str__(&self) -> String {
+        let name = self.inner.bed6.name.as_ref().map(|s| s.as_str()).unwrap_or("?");
+        format!(
+            "{} ({}:{}-{}): signal={:.2}, p={:.2}, q={:.2}",
+            name,
+            self.inner.bed6.bed3.interval.chrom,
+            self.inner.bed6.bed3.interval.start,
+            self.inner.bed6.bed3.interval.end,
+            self.inner.signal_value,
+            self.inner.p_value,
+            self.inner.q_value
+        )
+    }
+}
+
+impl From<NarrowPeakRecord> for PyNarrowPeakRecord {
+    fn from(record: NarrowPeakRecord) -> Self {
+        PyNarrowPeakRecord {
+            inner: record,
+        }
+    }
+}
+
+/// Stream narrowPeak records with constant memory
+///
+/// Streaming iterator for ENCODE narrowPeak (ChIP-seq peak) files.
+///
+/// Args:
+///     path (str): Path to narrowPeak file (.narrowPeak or .narrowPeak.gz)
+///
+/// Example:
+///     >>> stream = NarrowPeakStream.from_path("peaks.narrowPeak")
+///     >>> significant_peaks = []
+///     >>> for record in stream:
+///     ...     if record.is_significant(2.0, 1.3):  # p<0.01, q<0.05
+///     ...         significant_peaks.append(record)
+///     >>> print(f"Found {len(significant_peaks)} significant peaks")
+#[pyclass(name = "NarrowPeakStream", unsendable)]
+pub struct PyNarrowPeakStream {
+    inner: Option<TabDelimitedParser<Box<dyn Read>, NarrowPeakRecord>>,
+}
+
+#[pymethods]
+impl PyNarrowPeakStream {
+    #[staticmethod]
+    fn from_path(path: String) -> PyResult<Self> {
+        let path_buf = PathBuf::from(path);
+        let reader = open_file(&path_buf)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        let parser = TabDelimitedParser::new(reader);
+
+        Ok(PyNarrowPeakStream {
+            inner: Some(parser),
+        })
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyNarrowPeakRecord> {
+        if let Some(ref mut parser) = slf.inner {
+            match parser.next() {
+                Some(Ok(record)) => Ok(record.into()),
+                Some(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())),
+                None => Err(pyo3::exceptions::PyStopIteration::new_err("no more records")),
+            }
+        } else {
+            Err(pyo3::exceptions::PyStopIteration::new_err("stream exhausted"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        "NarrowPeakStream(...)".to_string()
     }
 }

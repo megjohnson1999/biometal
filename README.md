@@ -30,19 +30,35 @@ Stream data directly from networks and analyze terabyte-scale datasets on consum
 
 ---
 
-## 🎉 NEW in v1.8.0: Format Library
+## 🎉 NEW in v1.10.0: Extended Format Support
 
-biometal now includes production-ready parsers for genomic annotation and assembly formats:
-- **BED**: Genomic intervals (ChIP-seq peaks, gene annotations)
-- **GFA**: Assembly graphs (pangenomes, read overlap graphs)
-- **VCF**: Genetic variants (SNPs, indels, structural variants)
+biometal now supports **12+ bioinformatics file formats** with production-ready streaming parsers:
+
+**Sequences & Reads**:
+- **FASTQ/FASTA**: Read sequences with quality scores
+- **BAM/SAM**: Binary alignment format with indexing (BAI)
+
+**Annotations & Features**:
+- **BED/narrowPeak**: Genomic intervals and ChIP-seq peaks (ENCODE)
 - **GFF3**: Hierarchical gene features (genes, mRNAs, exons, CDS)
+- **GTF**: Gene annotations for RNA-seq (GENCODE, Ensembl) **[NEW]**
+
+**Variants & Alignments**:
+- **VCF**: Genetic variants (SNPs, indels, structural variants)
+- **PAF**: minimap2 pairwise alignments (long-read analysis) **[NEW]**
+
+**Graphs & Assembly**:
+- **GFA**: Assembly graphs (pangenomes, read overlap graphs)
+
+**Indices**:
+- **FAI**: FASTA index for O(1) sequence lookup
+- **TBI**: Tabix index for O(log n) region queries
 
 All formats support:
 - ✅ Streaming architecture (constant ~5 MB memory)
-- ✅ Python gzip support (`.gz` files work transparently)
-- ✅ Property-based testing (23 tests validating format invariants)
-- ✅ Real-world validation (ENCODE, UCSC, Ensembl, 1000 Genomes data)
+- ✅ Automatic gzip decompression (`.gz` files)
+- ✅ Python bindings with optimized memory usage
+- ✅ Real-world validation (ENCODE, UCSC, Ensembl, 1000 Genomes)
 
 ---
 
@@ -53,7 +69,7 @@ All formats support:
 **Rust:**
 ```toml
 [dependencies]
-biometal = "1.8"
+biometal = "1.10"
 ```
 
 **Python:**
@@ -211,11 +227,11 @@ Learn biometal through hands-on Jupyter notebooks (5 complete, ~2.5 hours):
 
 | Platform | Performance | Tests | Status |
 |----------|-------------|-------|--------|
-| **Mac ARM** (M1-M4) | **16-25× speedup** | ✅ 860/860 | Optimized |
-| **AWS Graviton** | 6-10× speedup | ✅ 860/860 | Portable |
-| **Linux x86_64** | 1× (scalar) | ✅ 860/860 | Portable |
+| **Mac ARM** (M1-M4) | **16-25× speedup** | ✅ 551/551 | Optimized |
+| **AWS Graviton** | 6-10× speedup | ✅ 551/551 | Portable |
+| **Linux x86_64** | 1× (scalar) | ✅ 551/551 | Portable |
 
-*Test count: 649 unit tests + 211 doc tests + 23 property-based tests + 6 real-world integration tests*
+*Test count: 551 library tests (including 65 new tests for GTF, PAF, narrowPeak) + 23 property-based tests*
 
 ---
 
@@ -556,10 +572,10 @@ For the experimental methodology:
 ---
 
 <p align="center">
-<strong>Status:</strong> v1.8.0 released 🚀<br>
-<strong>Latest:</strong> Format library (BED, GFA, VCF, GFF3) with property-based testing (Nov 13, 2025)<br>
-<strong>Tests:</strong> 860 passing (649 unit + 211 doc + 23 property-based + 6 real-world integration)<br>
-<strong>Performance:</strong> 5.82M records/sec, 92.0 MiB/s throughput, <1ms index loading<br>
-<strong>Python Functions:</strong> 60+ (FASTQ/FASTA, BAM/BAI, BED, GFA, VCF, GFF3)<br>
+<strong>Status:</strong> v1.10.0 released 🚀<br>
+<strong>Latest:</strong> GTF + PAF + narrowPeak parsers with optimized Python bindings (Nov 14, 2025)<br>
+<strong>Tests:</strong> 551 library tests passing (including 65 new format tests) + 23 property-based<br>
+<strong>Performance:</strong> 5.82M records/sec, 92.0 MiB/s throughput, 50-60% Python memory reduction<br>
+<strong>Python Functions:</strong> 70+ (FASTQ/FASTA, BAM/BAI, BED/narrowPeak, GFA, VCF, GFF3, GTF, PAF)<br>
 <strong>Evidence Base:</strong> 1,357 experiments, 40,710 measurements
 </p>

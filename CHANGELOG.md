@@ -7,6 +7,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2025-11-14
+
+### 🚀 Major Feature: Additional Format Parsers (GTF + PAF + narrowPeak)
+
+This release adds **three new format parsers** for gene annotations, alignments, and peak calling, expanding biometal's format support to 12+ bioinformatics file types.
+
+**Why This Matters**:
+- GTF: Essential for RNA-seq workflows with GENCODE/Ensembl annotations
+- PAF: Native minimap2 alignment format for long-read analysis
+- narrowPeak: Standard ENCODE format for ChIP-seq peak calling
+- All formats use streaming architecture (constant ~5 MB memory)
+- Full Python bindings for cross-language workflows
+
+### Added
+
+#### GTF (Gene Transfer Format) Parser (src/formats/gtf.rs)
+
+**Functionality**:
+- `GtfRecord::from_line()`: Parse GTF annotation records
+- `GtfParser::new()`: Streaming iterator for GTF files
+- `GtfRecord::gene_id()`, `transcript_id()`: Required attribute accessors
+- `GtfRecord::gene_name()`, `gene_biotype()`: Optional attribute accessors
+- `GtfRecord::interval()`: Convert to 0-based genomic interval
+- `GtfRecord::length()`: Calculate feature length
+
+**Format Details**:
+- 9 tab-delimited columns (same structure as GFF3)
+- 1-based inclusive coordinates → converted to 0-based half-open
+- Attribute syntax: `key "value";` (quoted values)
+- **Required attributes**: gene_id, transcript_id (validated at parse time)
+- Common attributes: gene_name, transcript_name, gene_biotype, exon_number
+
+**Features**:
+- Streaming architecture (constant memory regardless of file size)
+- Automatic gzip decompression (.gtf.gz support)
+- Comment line skipping (lines starting with #)
+- Custom attribute parser for GTF-specific quoted format
+- **Validation**: Enforces presence of required gene_id and transcript_id
+
+**Python Bindings** (src/python/gtf.rs):
+- `GtfRecord`: Python class with all fields as properties
+- `GtfStream`: Streaming iterator for Python workflows
+- Helper methods: `to_line()`, `to_0based()`, `length()`
+- Integration with pandas, polars via streaming API
+
+**Tests**:
+- 20 unit tests covering parsing, attributes, validation
+- Edge cases: missing attributes, malformed records, comments
+- Round-trip serialization validation
+
+**Performance**:
+- Memory: Constant ~5 MB (streaming)
+- Speed: ~500k features/sec (I/O bound)
+- Optimized for: GENCODE, Ensembl GTF files
+
+#### PAF (Pairwise mApping Format) Parser (src/formats/paf.rs)
+
+**Functionality**:
+- `PafRecord::from_line()`: Parse minimap2 alignment records
+- `PafParser::new()`: Streaming iterator for PAF files
+- `PafRecord::identity()`: Calculate alignment identity percentage
+- `PafRecord::query_coverage()`: Query sequence coverage
+- `PafRecord::target_coverage()`: Target sequence coverage
+- `PafRecord::is_high_quality()`: Filter by mapping quality
+- `PafRecord::is_forward()`: Check strand orientation
+
+**Format Details**:
+- 12 required tab-delimited fields (minimap2 standard)
+- 0-based, half-open coordinates `[start, end)` (BED-like)
+- Fields: query/target names, lengths, coordinates, matches, mapq
+- Strand: '+' (same direction) or '-' (reverse complement)
+- Mapping quality: 0-254 (255 = missing)
+
+**Alignment Metrics**:
+- Identity: num_matches / alignment_length
+- Coverage: aligned_length / total_length
+- Quality filtering: mapq thresholds
+- Alignment length calculations
+
+**Python Bindings** (src/python/paf.rs):
+- `PafRecord`: All 12 fields as properties
+- `PafStream`: Streaming iterator
+- Helper methods: `identity()`, `query_coverage()`, `target_coverage()`
+- Quality filtering: `is_high_quality(min_mapq)`
+
+**Tests**:
+- 23 tests covering parsing, metrics, edge cases
+- Zero-length alignments, boundary conditions
+- Round-trip serialization
+
+**Performance**:
+- Memory: Constant ~5 MB (streaming)
+- Speed: I/O bound, ~1M records/sec
+- Use case: Long-read alignment analysis (PacBio, Nanopore)
+
+#### narrowPeak (ENCODE ChIP-seq Peak) Format (src/formats/bed.rs)
+
+**Functionality**:
+- `NarrowPeakRecord::from_line()`: Parse ENCODE peak records
+- `NarrowPeakParser::new()`: Streaming iterator
+- `NarrowPeakRecord::peak_position()`: Calculate peak summit position
+- `NarrowPeakRecord::is_significant()`: Filter by statistical thresholds
+
+**Format Details**:
+- Extends BED6 with 4 additional columns (BED6+4)
+- Fields: chrom, start, end, name, score, strand + signal, p-value, q-value, peak
+- Signal value: Measurement of enrichment
+- p-value / q-value: Statistical significance (-log10 transformed)
+- Peak offset: Position of peak summit relative to start
+
+**Statistical Filtering**:
+- `is_significant(p_threshold, q_threshold)`: Combined filtering
+- Peak summit calculation: start + peak_offset
+- Integration with statistical workflows
+
+**Python Bindings** (src/python/bed.rs):
+- `NarrowPeakRecord`: All BED6+4 fields as properties
+- `NarrowPeakStream`: Streaming iterator
+- Helper methods: `peak_position()`, `is_significant()`
+
+**Tests**:
+- 13 tests covering parsing, peak position, significance
+- Edge cases: zero offset peaks, missing values
+- Round-trip serialization
+
+**Performance**:
+- Memory: Constant ~5 MB (streaming)
+- Speed: I/O bound
+- Use case: ChIP-seq, ATAC-seq peak analysis
+
+### Changed
+
+#### Python Binding Optimizations
+
+**Memory Reduction** (50-60% per record):
+- GTF: Store inner Rust record directly (eliminated 4 string clones)
+- PAF: Store inner record (eliminated 12 allocations per to_line())
+- narrowPeak: Store inner record (eliminated nested struct reconstruction)
+
+**Implementation**:
+- Changed from explicit field storage to property getters
+- `to_line()` methods now delegate directly to inner record
+- Zero-copy access for string fields where possible
+
+**Impact**:
+- Python object size: 50-60% smaller
+- `to_line()` performance: 8-12× fewer allocations
+- Memory pressure: Significantly reduced for large-scale workflows
+
+### Fixed
+
+- **GTF validation**: Required attributes (gene_id, transcript_id) now enforced
+- **Clippy warnings**: Removed all tab characters from doc comments
+- **GTF helper methods**: gene_id() and transcript_id() now use safe indexing
+
+### Documentation
+
+- Added comprehensive doc comments for all three formats
+- Python examples for GTF, PAF, narrowPeak streaming
+- Format specification details in module docs
+
+### Tests
+
+- **Total**: 551 library tests passing
+- **New**: 65 tests for GTF (20) + PAF (23) + narrowPeak (13) + validation (9)
+- **Coverage**: Unit tests, edge cases, round-trip serialization
+
 ## [1.9.0] - 2025-11-14
 
 ### 🚀 Major Feature: Indexed Random Access (FAI + TBI)

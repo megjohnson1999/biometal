@@ -4,6 +4,7 @@
 //! - **BED3**: Minimal format (chrom, start, end)
 //! - **BED6**: Standard format (+ name, score, strand)
 //! - **BED12**: Full format (+ exon/block information)
+//! - **narrowPeak**: ENCODE ChIP-seq peaks (BED6 + signal, pValue, qValue, peak offset)
 //!
 //! # Format Specification
 //!
@@ -401,6 +402,182 @@ impl TabDelimitedRecord for Bed12Record {
     }
 }
 
+/// narrowPeak record: ENCODE ChIP-seq peaks (BED6 + signalValue, pValue, qValue, peak).
+///
+/// This format is used by ENCODE for called peaks of signal enrichment based on
+/// pooled, normalized ChIP-seq data. It extends BED6 with peak-calling statistics.
+///
+/// # Format
+///
+/// ```text
+/// chrom  start  end    name   score  strand  signalValue  pValue  qValue  peak
+/// chr1   1000   2000   peak1  100    .       12.5         8.3     5.2     450
+/// ```
+///
+/// # Fields (BED6+4)
+///
+/// **BED6 fields:**
+/// - **chrom**: Chromosome name
+/// - **start**: 0-based start position
+/// - **end**: Exclusive end position
+/// - **name**: Peak identifier (use `.` if unassigned)
+/// - **score**: Display darkness 0-1000 (optional, `.` for missing)
+/// - **strand**: `+`, `-`, or `.` (not applicable for most ChIP-seq)
+///
+/// **narrowPeak extensions:**
+/// - **signalValue**: Overall enrichment measurement (averaged)
+/// - **pValue**: Statistical significance as -log10 (use -1 if unavailable)
+/// - **qValue**: FDR significance as -log10 (use -1 if unavailable)
+/// - **peak**: 0-based offset from start to peak summit (use -1 if not called)
+///
+/// # Examples
+///
+/// ```
+/// use biometal::formats::bed::NarrowPeakRecord;
+/// use biometal::formats::TabDelimitedRecord;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Full narrowPeak with all fields
+/// let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450";
+/// let record = NarrowPeakRecord::from_line(line)?;
+///
+/// assert_eq!(record.bed6.bed3.interval.chrom, "chr1");
+/// assert_eq!(record.signal_value, 12.5);
+/// assert_eq!(record.p_value, 8.3);
+/// assert_eq!(record.q_value, 5.2);
+/// assert_eq!(record.peak, Some(450));
+///
+/// // Peak summit absolute position
+/// let summit = record.peak_position();
+/// assert_eq!(summit, Some(1450)); // start(1000) + peak(450)
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct NarrowPeakRecord {
+    /// BED6 fields (chrom, start, end, name, score, strand)
+    pub bed6: Bed6Record,
+    /// Overall enrichment measurement (averaged)
+    pub signal_value: f64,
+    /// Statistical significance as -log10 (-1 if unavailable)
+    pub p_value: f64,
+    /// FDR significance as -log10 (-1 if unavailable)
+    pub q_value: f64,
+    /// 0-based offset from start to peak summit (None if -1)
+    pub peak: Option<i32>,
+}
+
+impl NarrowPeakRecord {
+    /// Get the absolute genomic position of the peak summit.
+    ///
+    /// Returns `None` if peak offset is not available (-1 in file).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use biometal::formats::bed::NarrowPeakRecord;
+    /// use biometal::formats::TabDelimitedRecord;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let record = NarrowPeakRecord::from_line("chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450")?;
+    /// assert_eq!(record.peak_position(), Some(1450)); // 1000 + 450
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn peak_position(&self) -> Option<u64> {
+        self.peak.map(|offset| {
+            self.bed6.bed3.interval.start + (offset as u64)
+        })
+    }
+
+    /// Check if this peak passes significance thresholds.
+    ///
+    /// # Arguments
+    ///
+    /// * `p_threshold` - Minimum -log10(p-value) (e.g., 2.0 for p < 0.01)
+    /// * `q_threshold` - Minimum -log10(q-value) (e.g., 1.3 for q < 0.05)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use biometal::formats::bed::NarrowPeakRecord;
+    /// use biometal::formats::TabDelimitedRecord;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let record = NarrowPeakRecord::from_line("chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450")?;
+    ///
+    /// // Significant at p < 0.01 (10^-8.3) and q < 0.05 (10^-5.2)
+    /// assert!(record.is_significant(2.0, 1.3));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_significant(&self, p_threshold: f64, q_threshold: f64) -> bool {
+        self.p_value >= p_threshold && self.q_value >= q_threshold
+    }
+}
+
+impl TabDelimitedRecord for NarrowPeakRecord {
+    fn from_line(line: &str) -> Result<Self> {
+        let fields = split_fields(line, Some(10), 0)?;
+
+        // Parse BED6 fields
+        let chrom = fields[0].to_string();
+        let start: u64 = parse_required(fields[1], "start", 0)?;
+        let end: u64 = parse_required(fields[2], "end", 0)?;
+        let interval = GenomicInterval::new(chrom, start, end)?;
+        let bed3 = Bed3Record { interval };
+
+        let name: Option<String> = parse_optional(fields[3], "name", 0)?;
+        let score: Option<u32> = parse_optional(fields[4], "score", 0)?;
+        let strand = Some(Strand::from_str(fields[5])?);
+        let bed6 = Bed6Record {
+            bed3,
+            name,
+            score,
+            strand,
+        };
+
+        // Parse narrowPeak-specific fields
+        let signal_value: f64 = parse_required(fields[6], "signalValue", 0)?;
+        let p_value: f64 = parse_required(fields[7], "pValue", 0)?;
+        let q_value: f64 = parse_required(fields[8], "qValue", 0)?;
+        let peak_offset: i32 = parse_required(fields[9], "peak", 0)?;
+        let peak = if peak_offset == -1 {
+            None
+        } else {
+            Some(peak_offset)
+        };
+
+        Ok(NarrowPeakRecord {
+            bed6,
+            signal_value,
+            p_value,
+            q_value,
+            peak,
+        })
+    }
+
+    fn to_line(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            self.bed6.bed3.interval.chrom,
+            self.bed6.bed3.interval.start,
+            self.bed6.bed3.interval.end,
+            self.bed6.name.as_ref().map(|s| s.as_str()).unwrap_or("."),
+            self.bed6.score.map(|s| s.to_string()).unwrap_or_else(|| ".".to_string()),
+            self.bed6.strand.map(|s| s.to_string()).unwrap_or_else(|| ".".to_string()),
+            self.signal_value,
+            self.p_value,
+            self.q_value,
+            self.peak.unwrap_or(-1)
+        )
+    }
+
+    fn expected_fields() -> Option<usize> {
+        Some(10)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,5 +698,121 @@ mod tests {
         let record = Bed12Record::from_line(original).unwrap();
         let output = record.to_line();
         assert_eq!(output, original);
+    }
+
+    // narrowPeak tests
+    #[test]
+    fn test_narrowpeak_all_fields() {
+        let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        assert_eq!(record.bed6.bed3.interval.chrom, "chr1");
+        assert_eq!(record.bed6.bed3.interval.start, 1000);
+        assert_eq!(record.bed6.bed3.interval.end, 2000);
+        assert_eq!(record.bed6.name, Some("peak1".to_string()));
+        assert_eq!(record.bed6.score, Some(100));
+        assert_eq!(record.signal_value, 12.5);
+        assert_eq!(record.p_value, 8.3);
+        assert_eq!(record.q_value, 5.2);
+        assert_eq!(record.peak, Some(450));
+    }
+
+    #[test]
+    fn test_narrowpeak_peak_position() {
+        let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        // Peak summit = start + offset = 1000 + 450 = 1450
+        assert_eq!(record.peak_position(), Some(1450));
+    }
+
+    #[test]
+    fn test_narrowpeak_no_peak() {
+        let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t-1";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        assert_eq!(record.peak, None);
+        assert_eq!(record.peak_position(), None);
+    }
+
+    #[test]
+    fn test_narrowpeak_significance() {
+        let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        // p=8.3 means 10^-8.3, q=5.2 means 10^-5.2
+        assert!(record.is_significant(2.0, 1.3)); // p<0.01, q<0.05
+        assert!(record.is_significant(8.0, 5.0)); // Strict thresholds
+        assert!(!record.is_significant(9.0, 5.0)); // p threshold too high
+        assert!(!record.is_significant(8.0, 6.0)); // q threshold too high
+    }
+
+    #[test]
+    fn test_narrowpeak_unavailable_values() {
+        let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t-1\t-1\t-1";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        assert_eq!(record.p_value, -1.0);
+        assert_eq!(record.q_value, -1.0);
+        assert_eq!(record.peak, None);
+    }
+
+    #[test]
+    fn test_narrowpeak_round_trip() {
+        let original = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t450";
+        let record = NarrowPeakRecord::from_line(original).unwrap();
+        let output = record.to_line();
+
+        let record2 = NarrowPeakRecord::from_line(&output).unwrap();
+        assert_eq!(record, record2);
+    }
+
+    #[test]
+    fn test_narrowpeak_missing_bed6_values() {
+        let line = "chr1\t1000\t2000\t.\t.\t.\t12.5\t8.3\t5.2\t450";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        assert_eq!(record.bed6.name, None);
+        assert_eq!(record.bed6.score, None);
+        assert_eq!(record.bed6.strand, Some(Strand::Unknown));
+    }
+
+    #[test]
+    fn test_narrowpeak_different_strands() {
+        let forward = "chr1\t1000\t2000\tpeak1\t100\t+\t12.5\t8.3\t5.2\t450";
+        let reverse = "chr1\t1000\t2000\tpeak2\t100\t-\t12.5\t8.3\t5.2\t450";
+        let unknown = "chr1\t1000\t2000\tpeak3\t100\t.\t12.5\t8.3\t5.2\t450";
+
+        let record1 = NarrowPeakRecord::from_line(forward).unwrap();
+        let record2 = NarrowPeakRecord::from_line(reverse).unwrap();
+        let record3 = NarrowPeakRecord::from_line(unknown).unwrap();
+
+        assert_eq!(record1.bed6.strand, Some(Strand::Forward));
+        assert_eq!(record2.bed6.strand, Some(Strand::Reverse));
+        assert_eq!(record3.bed6.strand, Some(Strand::Unknown));
+    }
+
+    #[test]
+    fn test_narrowpeak_score_ranges() {
+        let low = "chr1\t1000\t2000\tpeak1\t100\t.\t1.0\t2.0\t1.5\t450";
+        let high = "chr1\t1000\t2000\tpeak2\t900\t.\t100.0\t50.0\t40.0\t450";
+
+        let record1 = NarrowPeakRecord::from_line(low).unwrap();
+        let record2 = NarrowPeakRecord::from_line(high).unwrap();
+
+        assert_eq!(record1.bed6.score, Some(100));
+        assert_eq!(record2.bed6.score, Some(900));
+        assert_eq!(record1.signal_value, 1.0);
+        assert_eq!(record2.signal_value, 100.0);
+    }
+
+    #[test]
+    fn test_narrowpeak_zero_offset_peak() {
+        let line = "chr1\t1000\t2000\tpeak1\t100\t.\t12.5\t8.3\t5.2\t0";
+        let record = NarrowPeakRecord::from_line(line).unwrap();
+
+        // Peak at start of region
+        assert_eq!(record.peak, Some(0));
+        assert_eq!(record.peak_position(), Some(1000));
     }
 }

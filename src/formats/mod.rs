@@ -4,7 +4,8 @@
 //! - **BED**: Browser Extensible Data (genomic intervals)
 //! - **GFA**: Graphical Fragment Assembly (assembly graphs, pangenomes)
 //! - **VCF**: Variant Call Format (genetic variants)
-//! - **GFF/GTF**: General Feature Format (gene annotations)
+//! - **GFF3**: General Feature Format (gene annotations)
+//! - **GTF**: Gene Transfer Format (gene annotations, RNA-seq)
 //!
 //! All parsers implement:
 //! - **Streaming architecture**: Constant memory usage regardless of file size
@@ -49,15 +50,19 @@
 //! - [`primitives`]: Shared infrastructure for tab-delimited formats
 //!   - Generic parsers, field utilities, genomic types
 //! - Format-specific modules:
-//!   - [`bed`]: BED format parser (BED3, BED6, BED12)
+//!   - [`bed`]: BED format parser (BED3, BED6, BED12, narrowPeak)
 //!   - [`gfa`]: GFA format parser (assembly graphs, pangenomes)
 //!   - [`vcf`]: VCF format parser (genetic variants)
 //!   - [`gff`]: GFF3 format parser (gene annotations)
+//!   - [`gtf`]: GTF format parser (gene annotations, RNA-seq)
+//!   - [`paf`]: PAF format parser (minimap2 alignments)
 
 pub mod bed;
 pub mod gfa;
 pub mod gff;
+pub mod gtf;
 pub mod index;
+pub mod paf;
 pub mod primitives;
 pub mod vcf;
 
