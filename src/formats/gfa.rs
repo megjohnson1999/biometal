@@ -654,6 +654,269 @@ fn parse_gfa_tags(fields: &[&str]) -> HashMap<String, String> {
     tags
 }
 
+/// GFA writer.
+///
+/// Writes GFA records to a file with optional compression.
+///
+/// # Features
+///
+/// - Automatic compression detection (`.gz` extension)
+/// - Streaming writes (constant memory)
+/// - Type-safe record writing
+///
+/// # Examples
+///
+/// ## Writing Segments
+///
+/// ```no_run
+/// use biometal::formats::gfa::{GfaSegment, GfaWriter};
+/// use std::collections::HashMap;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut writer = GfaWriter::create("assembly.gfa")?;
+///
+/// // Write header
+/// writer.write_header(HashMap::from([
+///     ("VN".to_string(), "Z:1.0".to_string()),
+/// ]))?;
+///
+/// // Write segment
+/// let segment = GfaSegment {
+///     name: "ctg1".to_string(),
+///     sequence: "ACGTACGT".to_string(),
+///     tags: HashMap::new(),
+/// };
+/// writer.write_segment(&segment)?;
+///
+/// writer.finish()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Writing Links
+///
+/// ```no_run
+/// use biometal::formats::gfa::{GfaLink, GfaWriter, Orientation};
+/// use std::collections::HashMap;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut writer = GfaWriter::create("graph.gfa")?;
+///
+/// let link = GfaLink {
+///     from_segment: "ctg1".to_string(),
+///     from_orient: Orientation::Forward,
+///     to_segment: "ctg2".to_string(),
+///     to_orient: Orientation::Reverse,
+///     overlap: "4M".to_string(),
+///     tags: HashMap::new(),
+/// };
+/// writer.write_link(&link)?;
+///
+/// writer.finish()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Writing Paths
+///
+/// ```no_run
+/// use biometal::formats::gfa::{GfaPath, GfaWriter};
+/// use std::collections::HashMap;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut writer = GfaWriter::create("paths.gfa")?;
+///
+/// let path = GfaPath {
+///     name: "path1".to_string(),
+///     segments: vec!["ctg1+".to_string(), "ctg2-".to_string()],
+///     overlaps: vec!["4M".to_string()],
+///     tags: HashMap::new(),
+/// };
+/// writer.write_path(&path)?;
+///
+/// writer.finish()?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct GfaWriter {
+    writer: std::io::BufWriter<Box<dyn std::io::Write>>,
+    records_written: usize,
+}
+
+impl GfaWriter {
+    /// Create a new GFA writer for a file.
+    ///
+    /// Automatically detects compression based on file extension:
+    /// - `.gfa` → uncompressed
+    /// - `.gfa.gz` → gzip compressed
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::gfa::GfaWriter;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Uncompressed
+    /// let writer = GfaWriter::create("assembly.gfa")?;
+    ///
+    /// // Compressed
+    /// let writer = GfaWriter::create("assembly.gfa.gz")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        use crate::io::sink::DataSink;
+        use crate::io::compression::CompressedWriter;
+        use std::io::Write;
+
+        let sink = DataSink::from_path(path);
+        let compressed_writer = CompressedWriter::new(sink)
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))?;
+
+        let writer: Box<dyn Write> = Box::new(compressed_writer);
+        Ok(Self {
+            writer: std::io::BufWriter::new(writer),
+            records_written: 0,
+        })
+    }
+
+    /// Write a GFA header record.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::gfa::GfaWriter;
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = GfaWriter::create("output.gfa")?;
+    /// writer.write_header(HashMap::from([
+    ///     ("VN".to_string(), "Z:1.0".to_string()),
+    /// ]))?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_header(&mut self, tags: HashMap<String, String>) -> Result<()> {
+        let header = GfaHeader { tags };
+        self.write_record(&GfaRecord::Header(header))
+    }
+
+    /// Write a GFA segment record.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::gfa::{GfaSegment, GfaWriter};
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = GfaWriter::create("output.gfa")?;
+    ///
+    /// let segment = GfaSegment {
+    ///     name: "ctg1".to_string(),
+    ///     sequence: "ACGTACGT".to_string(),
+    ///     tags: HashMap::new(),
+    /// };
+    /// writer.write_segment(&segment)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_segment(&mut self, segment: &GfaSegment) -> Result<()> {
+        self.write_record(&GfaRecord::Segment(segment.clone()))
+    }
+
+    /// Write a GFA link record.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::gfa::{GfaLink, GfaWriter, Orientation};
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = GfaWriter::create("output.gfa")?;
+    ///
+    /// let link = GfaLink {
+    ///     from_segment: "ctg1".to_string(),
+    ///     from_orient: Orientation::Forward,
+    ///     to_segment: "ctg2".to_string(),
+    ///     to_orient: Orientation::Reverse,
+    ///     overlap: "4M".to_string(),
+    ///     tags: HashMap::new(),
+    /// };
+    /// writer.write_link(&link)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_link(&mut self, link: &GfaLink) -> Result<()> {
+        self.write_record(&GfaRecord::Link(link.clone()))
+    }
+
+    /// Write a GFA path record.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::gfa::{GfaPath, GfaWriter};
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = GfaWriter::create("output.gfa")?;
+    ///
+    /// let path = GfaPath {
+    ///     name: "path1".to_string(),
+    ///     segments: vec!["ctg1+".to_string(), "ctg2-".to_string()],
+    ///     overlaps: vec!["4M".to_string()],
+    ///     tags: HashMap::new(),
+    /// };
+    /// writer.write_path(&path)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_path(&mut self, path: &GfaPath) -> Result<()> {
+        self.write_record(&GfaRecord::Path(path.clone()))
+    }
+
+    /// Write a generic GFA record.
+    fn write_record(&mut self, record: &GfaRecord) -> Result<()> {
+        use std::io::Write;
+
+        let line = record.to_line();
+        writeln!(self.writer, "{}", line)
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))?;
+
+        self.records_written += 1;
+        Ok(())
+    }
+
+    /// Get the number of records written.
+    pub fn records_written(&self) -> usize {
+        self.records_written
+    }
+
+    /// Finish writing and flush all buffers.
+    ///
+    /// This must be called to ensure all data is written to disk.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::gfa::GfaWriter;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = GfaWriter::create("output.gfa")?;
+    /// // ... write records ...
+    /// writer.finish()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn finish(&mut self) -> Result<()> {
+        use std::io::Write;
+        self.writer.flush()
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,5 +1029,123 @@ mod tests {
         let path = GfaPath::from_line(original).unwrap();
         let output = path.to_line();
         assert_eq!(output, original);
+    }
+
+    #[test]
+    fn test_gfa_writer_basic() {
+        use std::io::Read;
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let temp_path = temp_file.path();
+
+        {
+            let mut writer = GfaWriter::create(temp_path).unwrap();
+
+            // Write header
+            writer.write_header(HashMap::from([
+                ("VN".to_string(), "Z:1.0".to_string()),
+            ])).unwrap();
+
+            // Write segment
+            let segment = GfaSegment {
+                name: "ctg1".to_string(),
+                sequence: "ACGTACGT".to_string(),
+                tags: HashMap::new(),
+            };
+            writer.write_segment(&segment).unwrap();
+
+            // Write link
+            let link = GfaLink {
+                from_segment: "ctg1".to_string(),
+                from_orient: Orientation::Forward,
+                to_segment: "ctg2".to_string(),
+                to_orient: Orientation::Reverse,
+                overlap: "4M".to_string(),
+                tags: HashMap::new(),
+            };
+            writer.write_link(&link).unwrap();
+
+            // Write path
+            let path = GfaPath {
+                name: "path1".to_string(),
+                segments: vec!["ctg1+".to_string(), "ctg2-".to_string()],
+                overlaps: vec!["4M".to_string()],
+                tags: HashMap::new(),
+            };
+            writer.write_path(&path).unwrap();
+
+            assert_eq!(writer.records_written(), 4);
+            writer.finish().unwrap();
+        }
+
+        // Read back and verify
+        let mut content = String::new();
+        std::fs::File::open(temp_path).unwrap()
+            .read_to_string(&mut content).unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].starts_with('H'));
+        assert!(lines[1].starts_with('S'));
+        assert!(lines[2].starts_with('L'));
+        assert!(lines[3].starts_with('P'));
+    }
+
+    #[test]
+    fn test_gfa_writer_round_trip() {
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let temp_path = temp_file.path();
+
+        // Original records
+        let segment = GfaSegment {
+            name: "ctg1".to_string(),
+            sequence: "ACGT".to_string(),
+            tags: HashMap::from([("LN".to_string(), "i:4".to_string())]),
+        };
+
+        let link = GfaLink {
+            from_segment: "ctg1".to_string(),
+            from_orient: Orientation::Forward,
+            to_segment: "ctg2".to_string(),
+            to_orient: Orientation::Reverse,
+            overlap: "4M".to_string(),
+            tags: HashMap::new(),
+        };
+
+        // Write
+        {
+            let mut writer = GfaWriter::create(temp_path).unwrap();
+            writer.write_segment(&segment).unwrap();
+            writer.write_link(&link).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read back
+        let parser = GfaParser::<std::fs::File>::from_path(temp_path).unwrap();
+        let records: Vec<_> = parser.collect();
+
+        assert_eq!(records.len(), 2);
+
+        // Verify segment
+        if let Ok(GfaRecord::Segment(seg)) = &records[0] {
+            assert_eq!(seg.name, "ctg1");
+            assert_eq!(seg.sequence, "ACGT");
+            assert_eq!(seg.tags.get("LN"), Some(&"i:4".to_string()));
+        } else {
+            panic!("Expected segment");
+        }
+
+        // Verify link
+        if let Ok(GfaRecord::Link(lnk)) = &records[1] {
+            assert_eq!(lnk.from_segment, "ctg1");
+            assert_eq!(lnk.from_orient, Orientation::Forward);
+            assert_eq!(lnk.to_segment, "ctg2");
+            assert_eq!(lnk.to_orient, Orientation::Reverse);
+        } else {
+            panic!("Expected link");
+        }
     }
 }

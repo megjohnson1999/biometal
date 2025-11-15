@@ -16,8 +16,8 @@ use pyo3::types::PyDict;
 use pyo3::exceptions::PyStopIteration;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use crate::io::bam::{BamReader, Header, Reference, Tag, TagValue, ArrayValue, CigarOp, SamWriter, BaiIndex, RegionQuery};
-use crate::io::compression::CompressedReader;
+use crate::io::bam::{BamReader, BamWriter, Header, Reference, Tag, TagValue, ArrayValue, CigarOp, SamWriter, SamReader, BaiIndex, RegionQuery};
+use crate::io::compression::{CompressedReader, DataSource};
 use std::fs::File;
 use std::io::BufWriter;
 
@@ -1823,6 +1823,271 @@ impl PySamWriter {
 
     fn __str__(&self) -> String {
         self.__repr__()
+    }
+}
+
+/// BAM format writer (v1.8.0)
+///
+/// Writes BAM alignment records with BGZF compression.
+/// Enables filtering workflows and format conversion.
+///
+/// Args:
+///     path (str): Output BAM file path
+///     header (BamHeader): BAM header with references
+///
+/// Example:
+///     >>> import biometal
+///     >>>
+///     >>> # Read BAM, filter by quality, write filtered BAM
+///     >>> reader = biometal.BamReader.from_path("input.bam")
+///     >>> header = reader.header
+///     >>>
+///     >>> writer = biometal.BamWriter.create("filtered.bam", header)
+///     >>>
+///     >>> for record in reader:
+///     ...     if record.mapq and record.mapq >= 30:
+///     ...         writer.write_record(record)
+///     >>>
+///     >>> writer.finish()
+///     >>> print(f"Wrote {writer.records_written()} high-quality reads")
+///
+/// Note:
+///     - Always call finish() to flush buffers and write EOF marker
+///     - Memory footprint remains constant at ~5 MB
+///     - Uses cloudflare_zlib for fast compression (v1.7.0)
+#[pyclass(name = "BamWriter", unsendable)]
+pub struct PyBamWriter {
+    writer: Option<BamWriter>,
+    path: String,
+}
+
+#[pymethods]
+impl PyBamWriter {
+    /// Create a new BAM writer
+    ///
+    /// Args:
+    ///     path (str): Output BAM file path
+    ///     header (BamHeader): BAM header with references
+    ///
+    /// Returns:
+    ///     BamWriter: New BAM writer instance
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be created
+    ///
+    /// Example:
+    ///     >>> reader = biometal.BamReader.from_path("input.bam")
+    ///     >>> writer = biometal.BamWriter.create("output.bam", reader.header)
+    #[staticmethod]
+    fn create(path: String, header: &PyBamHeader) -> PyResult<Self> {
+        // Convert PyBamHeader to Header
+        let rust_header = Header::new(
+            header.text.clone(),
+            header.references.iter().map(|r| {
+                Reference::new(r.name.clone(), r.length)
+            }).collect(),
+        );
+
+        let bam_writer = BamWriter::create(&path, rust_header)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                format!("Failed to create BAM file {}: {}", path, e)
+            ))?;
+
+        Ok(PyBamWriter {
+            writer: Some(bam_writer),
+            path: path.clone(),
+        })
+    }
+
+    /// Write a BAM record
+    ///
+    /// Args:
+    ///     record (BamRecord): Record to write
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///     RuntimeError: If writer has been closed
+    ///
+    /// Example:
+    ///     >>> for record in reader:
+    ///     ...     if record.mapq and record.mapq >= 30:
+    ///     ...         writer.write_record(record)
+    fn write_record(&mut self, record: &PyBamRecord) -> PyResult<()> {
+        let writer = self.writer.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Writer has been closed")
+        })?;
+
+        // Convert PyBamRecord to Record
+        let rust_record = crate::io::bam::Record {
+            name: record.name.clone(),
+            reference_id: record.reference_id,
+            position: record.position,
+            mapq: record.mapq,
+            flags: record.flags,
+            mate_reference_id: record.mate_reference_id,
+            mate_position: record.mate_position,
+            template_length: record.template_length,
+            sequence: record.sequence.clone(),
+            quality: record.quality.clone(),
+            cigar: record.cigar_ops.clone(),
+            tags: record.tags.clone(),
+        };
+
+        writer.write_record(&rust_record)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                format!("Failed to write record: {}", e)
+            ))
+    }
+
+    /// Get number of records written
+    ///
+    /// Returns:
+    ///     int: Number of records written so far
+    ///
+    /// Example:
+    ///     >>> print(f"Wrote {writer.records_written()} records")
+    fn records_written(&self) -> PyResult<usize> {
+        let writer = self.writer.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Writer has been closed")
+        })?;
+        Ok(writer.records_written())
+    }
+
+    /// Finish writing and close the BAM file
+    ///
+    /// Flushes buffers and writes the BGZF EOF marker.
+    /// This is critical for BAM file integrity.
+    ///
+    /// Raises:
+    ///     IOError: If flush or close fails
+    ///
+    /// Note:
+    ///     Always call finish() explicitly to ensure errors are caught.
+    ///     Writer is automatically closed when dropped, but errors are silent.
+    ///
+    /// Example:
+    ///     >>> writer.finish()
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.writer.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                    format!("Failed to finish BAM file: {}", e)
+                ))?;
+        }
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("BamWriter(path='{}')", self.path)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// SAM format reader
+///
+/// Streams SAM alignment records with constant memory usage.
+/// SAM is the text representation of BAM - same data, different encoding.
+///
+/// Args:
+///     path (str): Path to SAM file (.sam)
+///
+/// Example:
+///     >>> import biometal
+///     >>> sam = biometal.SamReader.from_path("alignments.sam")
+///     >>>
+///     /// # Access header info
+///     >>> print(f"References: {sam.reference_count}")
+///     >>>
+///     /// # Stream records with constant memory
+///     >>> for record in sam:
+///     ...     if record.is_mapped and record.mapq and record.mapq >= 30:
+///     ...         print(f"{record.name}: {record.position}")
+///
+/// Note:
+///     Memory footprint remains constant at ~5 MB even for large SAM files.
+#[pyclass(name = "SamReader", unsendable)]
+pub struct PySamReader {
+    inner: Option<SamReader<CompressedReader>>,
+    header: PyBamHeader,
+}
+
+#[pymethods]
+impl PySamReader {
+    /// Open SAM file for streaming
+    ///
+    /// Args:
+    ///     path (str): Path to SAM file
+    ///
+    /// Returns:
+    ///     SamReader: Streaming iterator with ~5 MB constant memory
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be opened
+    ///     ValueError: If file format is invalid
+    ///
+    /// Example:
+    ///     >>> sam = biometal.SamReader.from_path("alignments.sam")
+    ///     >>> print(f"Opened SAM with {sam.reference_count} references")
+    #[staticmethod]
+    fn from_path(path: String) -> PyResult<Self> {
+        let path_buf = PathBuf::from(path);
+
+        // Create data source and compressed reader (handles gzip automatically)
+        let source = DataSource::from_path(&path_buf);
+        let compressed_reader = CompressedReader::new(source)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        let reader = SamReader::new(compressed_reader)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        // Clone header info for Python access
+        let header = PyBamHeader::from(reader.header());
+
+        Ok(PySamReader {
+            inner: Some(reader),
+            header,
+        })
+    }
+
+    /// Get SAM header
+    ///
+    /// Returns:
+    ///     BamHeader: Header with reference information
+    #[getter]
+    fn header(&self) -> PyBamHeader {
+        self.header.clone()
+    }
+
+    /// Get number of reference sequences
+    ///
+    /// Returns:
+    ///     int: Number of reference sequences in SAM header
+    #[getter]
+    fn reference_count(&self) -> usize {
+        self.header.reference_count
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyBamRecord> {
+        if let Some(ref mut reader) = slf.inner {
+            match reader.read_record() {
+                Ok(Some(record)) => Ok(record.into()),
+                Ok(None) => Err(PyStopIteration::new_err("no more records")),
+                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())),
+            }
+        } else {
+            Err(PyStopIteration::new_err("reader exhausted"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("SamReader(references={})", self.header.reference_count)
     }
 }
 

@@ -373,6 +373,224 @@ impl<R: Read, T: TabDelimitedRecord> Iterator for TabDelimitedParser<R, T> {
     }
 }
 
+/// Generic writer for tab-delimited formats.
+///
+/// Writes records one at a time with automatic compression support.
+/// Works with any type implementing [`TabDelimitedRecord`].
+///
+/// # Type Parameters
+///
+/// - `T`: The record type (must implement `TabDelimitedRecord`)
+///
+/// # Features
+///
+/// - Automatic compression (gzip, bgzip) based on file extension
+/// - Streaming write (constant memory)
+/// - Validation via record's `to_line()` method
+///
+/// # Examples
+///
+/// ## Write BED records
+///
+/// ```no_run
+/// use biometal::formats::bed::Bed3Record;
+/// use biometal::formats::primitives::{TabDelimitedWriter, TabDelimitedRecord};
+/// use biometal::formats::primitives::GenomicInterval;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut writer = TabDelimitedWriter::create("output.bed.gz")?;
+///
+/// let interval = GenomicInterval::new("chr1".to_string(), 1000, 2000)?;
+/// let record = Bed3Record { interval };
+///
+/// writer.write_record(&record)?;
+/// writer.finish()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Write from stream
+///
+/// ```no_run
+/// use biometal::formats::bed::Bed6Record;
+/// use biometal::formats::primitives::{TabDelimitedParser, TabDelimitedWriter};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let parser = TabDelimitedParser::<_, Bed6Record>::from_path("input.bed")?;
+/// let mut writer = TabDelimitedWriter::create("output.bed.gz")?;
+///
+/// for record in parser {
+///     writer.write_record(&record?)?;
+/// }
+///
+/// writer.finish()?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct TabDelimitedWriter<T: TabDelimitedRecord> {
+    writer: crate::io::compression::CompressedWriter,
+    records_written: usize,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: TabDelimitedRecord> TabDelimitedWriter<T> {
+    /// Create a new writer from a data sink
+    ///
+    /// Automatically detects compression from file extension:
+    /// - `.gz` → gzip compression
+    /// - `.bgz` → bgzip compression
+    /// - other → uncompressed
+    pub fn new(sink: crate::io::sink::DataSink) -> Result<Self> {
+        let writer = crate::io::compression::CompressedWriter::new(sink)
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))?;
+        Ok(Self {
+            writer,
+            records_written: 0,
+            _phantom: PhantomData,
+        })
+    }
+
+    /// Create a writer from a file path
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::bed::Bed3Record;
+    /// use biometal::formats::primitives::TabDelimitedWriter;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let writer = TabDelimitedWriter::<Bed3Record>::create("output.bed.gz")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::new(crate::io::sink::DataSink::from_path(path))
+    }
+
+    /// Create a writer to stdout
+    ///
+    /// Useful for streaming pipelines:
+    /// ```bash
+    /// biometal filter input.bed | biometal stats
+    /// ```
+    pub fn stdout() -> Result<Self> {
+        Self::new(crate::io::sink::DataSink::stdout())
+    }
+
+    /// Write a single record
+    ///
+    /// # Arguments
+    ///
+    /// * `record` - Record to write
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an I/O error occurs.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::bed::Bed3Record;
+    /// use biometal::formats::primitives::{TabDelimitedWriter, GenomicInterval};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = TabDelimitedWriter::create("output.bed")?;
+    ///
+    /// let interval = GenomicInterval::new("chr1".to_string(), 1000, 2000)?;
+    /// let record = Bed3Record { interval };
+    ///
+    /// writer.write_record(&record)?;
+    /// writer.finish()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_record(&mut self, record: &T) -> Result<()> {
+        use std::io::Write;
+
+        let line = record.to_line();
+        writeln!(self.writer, "{}", line)
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))?;
+
+        self.records_written += 1;
+        Ok(())
+    }
+
+    /// Write multiple records from an iterator
+    ///
+    /// Convenience method for writing many records. The iterator can be
+    /// any type that yields `Result<T>`, such as `TabDelimitedParser<_, T>`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::bed::Bed6Record;
+    /// use biometal::formats::primitives::{TabDelimitedParser, TabDelimitedWriter};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let input = TabDelimitedParser::<_, Bed6Record>::from_path("input.bed")?;
+    /// let mut writer = TabDelimitedWriter::create("output.bed.gz")?;
+    ///
+    /// writer.write_all(input)?;
+    /// writer.finish()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_all<I>(&mut self, records: I) -> Result<()>
+    where
+        I: IntoIterator<Item = Result<T>>,
+    {
+        for record in records {
+            self.write_record(&record?)?;
+        }
+        Ok(())
+    }
+
+    /// Get the number of records written so far
+    pub fn records_written(&self) -> usize {
+        self.records_written
+    }
+
+    /// Flush buffered data to disk
+    ///
+    /// You typically don't need to call this explicitly as `finish()`
+    /// will flush automatically. However, it can be useful for
+    /// long-running processes to ensure data is persisted.
+    pub fn flush(&mut self) -> Result<()> {
+        use std::io::Write;
+        self.writer.flush()
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))
+    }
+
+    /// Finish writing and flush all data
+    ///
+    /// This method MUST be called to ensure all data is written to disk.
+    /// It flushes the internal buffers and closes the compression stream.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use biometal::formats::bed::Bed3Record;
+    /// use biometal::formats::primitives::{TabDelimitedWriter, GenomicInterval};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut writer = TabDelimitedWriter::create("output.bed.gz")?;
+    ///
+    /// let interval = GenomicInterval::new("chr1".to_string(), 1000, 2000)?;
+    /// let record = Bed3Record { interval };
+    ///
+    /// writer.write_record(&record)?;
+    /// writer.finish()?;  // IMPORTANT: Flush and close
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn finish(mut self) -> Result<()> {
+        use std::io::Write;
+        self.writer.flush()
+            .map_err(|e| crate::formats::primitives::FormatError::Io(e))?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,5 +717,228 @@ mod tests {
         // After second record
         let _ = parser.next();
         assert_eq!(parser.line_number(), 3);
+    }
+
+    // TabDelimitedWriter tests
+    #[test]
+    fn test_writer_basic() {
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        {
+            let mut writer = TabDelimitedWriter::<TestRecord>::create(path).unwrap();
+
+            let record = TestRecord {
+                chrom: "chr1".to_string(),
+                start: 1000,
+                end: 2000,
+            };
+
+            writer.write_record(&record).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read back and verify
+        let parser = TabDelimitedParser::<_, TestRecord>::from_path(path).unwrap();
+        let records: Vec<_> = parser.collect::<Result<_>>().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].chrom, "chr1");
+        assert_eq!(records[0].start, 1000);
+        assert_eq!(records[0].end, 2000);
+    }
+
+    #[test]
+    fn test_writer_multiple_records() {
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        {
+            let mut writer = TabDelimitedWriter::<TestRecord>::create(path).unwrap();
+
+            writer.write_record(&TestRecord {
+                chrom: "chr1".to_string(),
+                start: 1000,
+                end: 2000,
+            }).unwrap();
+
+            writer.write_record(&TestRecord {
+                chrom: "chr2".to_string(),
+                start: 3000,
+                end: 4000,
+            }).unwrap();
+
+            assert_eq!(writer.records_written(), 2);
+            writer.finish().unwrap();
+        }
+
+        // Read back and verify
+        let parser = TabDelimitedParser::<_, TestRecord>::from_path(path).unwrap();
+        let records: Vec<_> = parser.collect::<Result<_>>().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].chrom, "chr1");
+        assert_eq!(records[1].chrom, "chr2");
+    }
+
+    #[test]
+    fn test_writer_write_all() {
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        {
+            let mut writer = TabDelimitedWriter::<TestRecord>::create(path).unwrap();
+
+            let records = vec![
+                Ok(TestRecord { chrom: "chr1".to_string(), start: 100, end: 200 }),
+                Ok(TestRecord { chrom: "chr2".to_string(), start: 300, end: 400 }),
+                Ok(TestRecord { chrom: "chr3".to_string(), start: 500, end: 600 }),
+            ];
+
+            writer.write_all(records).unwrap();
+            assert_eq!(writer.records_written(), 3);
+            writer.finish().unwrap();
+        }
+
+        // Read back and verify
+        let parser = TabDelimitedParser::<_, TestRecord>::from_path(path).unwrap();
+        let records: Vec<_> = parser.collect::<Result<_>>().unwrap();
+        assert_eq!(records.len(), 3);
+    }
+
+    #[test]
+    fn test_writer_round_trip() {
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        // Original records
+        let original_records = vec![
+            TestRecord { chrom: "chr1".to_string(), start: 1000, end: 2000 },
+            TestRecord { chrom: "chr2".to_string(), start: 3000, end: 4000 },
+            TestRecord { chrom: "chr3".to_string(), start: 5000, end: 6000 },
+        ];
+
+        // Write records
+        {
+            let mut writer = TabDelimitedWriter::<TestRecord>::create(path).unwrap();
+
+            for record in &original_records {
+                writer.write_record(record).unwrap();
+            }
+
+            writer.finish().unwrap();
+        }
+
+        // Read back
+        let parser = TabDelimitedParser::<_, TestRecord>::from_path(path).unwrap();
+        let parsed_records: Vec<_> = parser.collect::<Result<_>>().unwrap();
+
+        // Verify
+        assert_eq!(parsed_records.len(), original_records.len());
+        for (parsed, original) in parsed_records.iter().zip(original_records.iter()) {
+            assert_eq!(parsed, original);
+        }
+    }
+
+    #[test]
+    fn test_writer_with_bed3() {
+        use tempfile::NamedTempFile;
+        use crate::formats::bed::Bed3Record;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        {
+            let mut writer = TabDelimitedWriter::<Bed3Record>::create(path).unwrap();
+
+            let interval = crate::formats::primitives::GenomicInterval::new(
+                "chr1".to_string(), 1000, 2000
+            ).unwrap();
+            let record = Bed3Record { interval };
+
+            writer.write_record(&record).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read back and verify
+        let parser = TabDelimitedParser::<_, Bed3Record>::from_path(path).unwrap();
+        let records: Vec<_> = parser.collect::<Result<_>>().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].interval.chrom, "chr1");
+        assert_eq!(records[0].interval.start, 1000);
+        assert_eq!(records[0].interval.end, 2000);
+    }
+
+    #[test]
+    fn test_writer_with_bed6() {
+        use tempfile::NamedTempFile;
+        use crate::formats::bed::Bed6Record;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        {
+            let mut writer = TabDelimitedWriter::<Bed6Record>::create(path).unwrap();
+
+            let interval = crate::formats::primitives::GenomicInterval::new(
+                "chr1".to_string(), 1000, 2000
+            ).unwrap();
+
+            let bed3 = crate::formats::bed::Bed3Record { interval };
+            let record = Bed6Record {
+                bed3,
+                name: Some("gene1".to_string()),
+                score: Some(100),
+                strand: Some(crate::formats::primitives::Strand::Forward),
+            };
+
+            writer.write_record(&record).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read back and verify
+        let parser = TabDelimitedParser::<_, Bed6Record>::from_path(path).unwrap();
+        let records: Vec<_> = parser.collect::<Result<_>>().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].bed3.interval.chrom, "chr1");
+        assert_eq!(records[0].name, Some("gene1".to_string()));
+        assert_eq!(records[0].score, Some(100));
+    }
+
+    #[test]
+    fn test_writer_bed3_round_trip() {
+        use tempfile::NamedTempFile;
+        use crate::formats::bed::Bed3Record;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+
+        let original = Bed3Record {
+            interval: crate::formats::primitives::GenomicInterval::new(
+                "chr1".to_string(), 1000, 2000
+            ).unwrap(),
+        };
+
+        // Write
+        {
+            let mut writer = TabDelimitedWriter::<Bed3Record>::create(path).unwrap();
+            writer.write_record(&original).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read back
+        let parser = TabDelimitedParser::<_, Bed3Record>::from_path(path).unwrap();
+        let parsed: Vec<_> = parser.collect::<Result<_>>().unwrap();
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].interval.chrom, original.interval.chrom);
+        assert_eq!(parsed[0].interval.start, original.interval.start);
+        assert_eq!(parsed[0].interval.end, original.interval.end);
     }
 }

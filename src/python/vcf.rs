@@ -41,22 +41,54 @@ fn open_file(path: &Path) -> std::io::Result<Box<dyn Read>> {
 #[pyclass(name = "VcfHeader")]
 #[derive(Clone)]
 pub struct PyVcfHeader {
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub fileformat: String,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub info_fields: HashMap<String, String>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub format_fields: HashMap<String, String>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub filters: HashMap<String, String>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub contigs: HashMap<String, Option<u64>>,
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub samples: Vec<String>,
 }
 
 #[pymethods]
 impl PyVcfHeader {
+    #[new]
+    fn new(fileformat: String) -> Self {
+        PyVcfHeader {
+            fileformat,
+            info_fields: HashMap::new(),
+            format_fields: HashMap::new(),
+            filters: HashMap::new(),
+            contigs: HashMap::new(),
+            samples: Vec::new(),
+        }
+    }
+
+    /// Add an INFO field definition
+    fn add_info(&mut self, id: String, description: String) {
+        self.info_fields.insert(id, description);
+    }
+
+    /// Add a FORMAT field definition
+    fn add_format(&mut self, id: String, description: String) {
+        self.format_fields.insert(id, description);
+    }
+
+    /// Add a FILTER definition
+    fn add_filter(&mut self, id: String, description: String) {
+        self.filters.insert(id, description);
+    }
+
+    /// Add a contig
+    fn add_contig(&mut self, id: String, length: Option<u64>) {
+        self.contigs.insert(id, length);
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "VcfHeader(fileformat='{}', samples={})",
@@ -284,5 +316,118 @@ impl PyVcfStream {
 
     fn __repr__(&self) -> String {
         "VcfStream(...)".to_string()
+    }
+}
+
+// ============================================================================
+// Writer
+// ============================================================================
+
+use crate::formats::vcf::VcfWriter;
+use crate::io::DataSink;
+
+impl From<PyVcfHeader> for VcfHeader {
+    fn from(py_header: PyVcfHeader) -> Self {
+        VcfHeader {
+            fileformat: py_header.fileformat,
+            info_fields: py_header.info_fields,
+            format_fields: py_header.format_fields,
+            filters: py_header.filters,
+            contigs: py_header.contigs,
+            metadata: Vec::new(), // Python interface doesn't expose raw metadata yet
+            samples: py_header.samples,
+        }
+    }
+}
+
+/// Write VCF records to a file
+///
+/// Streaming writer for VCF (Variant Call Format) with header support.
+/// Automatically handles compression based on file extension (.gz, .bgz).
+///
+/// Methods:
+///     create(path: str, header: VcfHeader) -> VcfWriter: Create writer for a file path
+///     stdout(header: VcfHeader) -> VcfWriter: Create writer for stdout
+///     write_record(record: VcfRecord): Write a single variant record
+///     records_written() -> int: Get count of written records
+///     finish(): Flush and close the writer
+///
+/// Example:
+///     >>> # Create header
+///     >>> header = VcfHeader("VCFv4.2")
+///     >>> header.info_fields["DP"] = "Total Depth"
+///     >>> header.samples = ["sample1", "sample2"]
+///     >>>
+///     >>> # Write VCF
+///     >>> writer = VcfWriter.create("output.vcf.gz", header)
+///     >>> for record in VcfStream.from_path("input.vcf"):
+///     ...     if record.filter == "PASS":
+///     ...         writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "VcfWriter", unsendable)]
+pub struct PyVcfWriter {
+    inner: Option<VcfWriter>,
+}
+
+#[pymethods]
+impl PyVcfWriter {
+    #[staticmethod]
+    fn create(path: String, header: PyVcfHeader) -> PyResult<Self> {
+        let rust_header: VcfHeader = header.into();
+        let writer = VcfWriter::create(&PathBuf::from(path), rust_header)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyVcfWriter { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout(header: PyVcfHeader) -> PyResult<Self> {
+        let rust_header: VcfHeader = header.into();
+        let writer = VcfWriter::stdout(rust_header)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyVcfWriter { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyVcfRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let rust_record = VcfRecord {
+                chrom: record.chrom.clone(),
+                pos: record.pos,
+                id: record.id.clone(),
+                reference: record.reference.clone(),
+                alternate: record.alternate.clone(),
+                quality: record.quality,
+                filter: record.filter.clone(),
+                info: record.info.clone(),
+                format: record.format.clone(),
+                samples: record.samples.clone(),
+            };
+
+            writer.write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("VcfWriter(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
     }
 }

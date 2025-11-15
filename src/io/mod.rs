@@ -10,7 +10,7 @@ mod paired;
 pub mod sink;
 
 pub use compression::{decompress_bgzip_parallel, CompressedReader, CompressedWriter, DataSource, MMAP_THRESHOLD};
-pub use fasta::{FaiIndex, FastaStream};
+pub use fasta::{FaiIndex, FastaStream, FastaWriter};
 pub use fastq::{FastqStream, FastqWriter};
 pub use paired::PairedFastqStream;
 pub use sink::DataSink;
@@ -32,3 +32,9 @@ pub use sra::{is_sra_accession, sra_to_url};
 // See experiments/native-bam-implementation/ for design and profiling
 pub mod bam;
 pub use bam::BamReader;
+
+// CRAM implementation (v1.11.0+)
+// Reference-based compressed alignment format
+// Uses noodles-cram for CRAM 3.0/3.1 support
+pub mod cram;
+pub use cram::CramReader;

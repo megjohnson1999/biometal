@@ -44,7 +44,7 @@
 //!
 //! See: `experiments/bam-simd-sequence-decoding/FINDINGS.md` for v1.5.0 NEON validation
 //!
-//! # Production Status (v1.5.0)
+//! # Production Status (v1.8.0)
 //!
 //! Complete implementation:
 //! - ✅ Header parsing (magic bytes, SAM text, references)
@@ -54,9 +54,10 @@
 //! - ✅ Tag parsing (typed values, convenience accessors v1.4.0)
 //! - ✅ Parallel BGZF decompression (6.5× speedup)
 //! - ✅ Streaming iterator interface
+//! - ✅ BAM writing with BGZF compression (v1.8.0) **NEW**
 //! - ✅ Python bindings (v1.3.0+)
 //!
-//! # Example
+//! # Reading BAM Files
 //!
 //! ```no_run
 //! use biometal::io::bam::BamReader;
@@ -81,20 +82,61 @@
 //! # }
 //! ```
 //!
-//! # Opening Files
+//! # Writing BAM Files (v1.8.0)
 //!
 //! ```no_run
-//! use biometal::io::bam::BamReader;
+//! use biometal::io::bam::{BamWriter, BamReader, Header, Reference, CigarOp};
 //!
-//! # fn main() -> biometal::Result<()> {
-//! // Convenience method
-//! let mut bam = BamReader::from_path("alignments.bam")?;
+//! # fn main() -> std::io::Result<()> {
+//! // Create header
+//! let header = Header::new(
+//!     "@HD\tVN:1.6\tSO:coordinate\n".to_string(),
+//!     vec![Reference::new("chr1".to_string(), 248956422)]
+//! );
 //!
-//! // Iterate over records
-//! for record in bam.records() {
+//! // Create writer
+//! let mut writer = BamWriter::create("output.bam", header)?;
+//!
+//! // Write records
+//! let mut record = biometal::io::bam::Record::new();
+//! record.name = "read1".to_string();
+//! record.reference_id = Some(0);
+//! record.position = Some(1000);
+//! record.sequence = b"ACGTACGT".to_vec();
+//! record.quality = b"########".to_vec();
+//! record.cigar = vec![CigarOp::Match(8)];
+//!
+//! writer.write_record(&record)?;
+//! writer.finish()?; // Important: flushes buffers and writes EOF marker
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Filtering Workflow (v1.8.0)
+//!
+//! Read BAM → filter by quality → write filtered BAM:
+//!
+//! ```no_run
+//! use biometal::io::bam::{BamReader, BamWriter};
+//!
+//! # fn main() -> std::io::Result<()> {
+//! // Read input BAM
+//! let mut reader = BamReader::from_path("input.bam")?;
+//! let header = reader.header().clone();
+//!
+//! // Create output BAM with same header
+//! let mut writer = BamWriter::create("filtered.bam", header)?;
+//!
+//! // Filter records (MAPQ ≥ 30)
+//! for record in reader.records() {
 //!     let record = record?;
-//!     println!("{}", record.name);
+//!     if record.mapq.unwrap_or(0) >= 30 {
+//!         writer.write_record(&record)?;
+//!     }
 //! }
+//!
+//! writer.finish()?;
+//! println!("Wrote {} high-quality reads", writer.records_written());
 //! # Ok(())
 //! # }
 //! ```
@@ -105,9 +147,11 @@ pub mod header;
 pub mod index;
 pub mod record;
 pub mod reader;
+pub mod sam_reader;
 pub mod sam_writer;
 pub mod sequence;
 pub mod tags;
+pub mod writer;
 
 // Re-export main types for convenience
 pub use cigar::{CigarOp, parse_cigar};
@@ -116,6 +160,8 @@ pub use header::{Header, Reference};
 pub use index::{BaiIndex, VirtualOffset, Chunk, Bin, ReferenceIndex};
 pub use record::{Record, parse_record};
 pub use reader::{BamReader, Records, RegionQuery};
+pub use sam_reader::SamReader;
 pub use sam_writer::SamWriter;
 pub use sequence::decode_sequence;
 pub use tags::{Tags, Tag, TagValue, ArrayValue, parse_tags};
+pub use writer::BamWriter;

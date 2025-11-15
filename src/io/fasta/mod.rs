@@ -38,6 +38,8 @@
 
 mod parser;
 pub mod index;
+mod writer;
 
 pub use parser::FastaStream;
 pub use index::FaiIndex;
+pub use writer::FastaWriter;

@@ -1,7 +1,7 @@
 //! Python wrappers for GFA format (assembly graphs)
 
 use pyo3::prelude::*;
-use crate::formats::gfa::{GfaSegment, GfaLink, GfaPath, GfaParser, Orientation};
+use crate::formats::gfa::{GfaSegment, GfaLink, GfaPath, GfaParser, GfaWriter, Orientation};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -368,5 +368,208 @@ impl PyGfaStream {
 
     fn __repr__(&self) -> String {
         "GfaStream(...)".to_string()
+    }
+}
+
+/// Write GFA records to a file
+///
+/// Writer for GFA assembly graphs with automatic compression support.
+/// Supports writing segments, links, and paths with optional header.
+///
+/// Args:
+///     path (str): Output file path (`.gfa` or `.gfa.gz`)
+///
+/// Example:
+///     >>> writer = GfaWriter.create("assembly.gfa")
+///     >>>
+///     >>> # Write header
+///     >>> writer.write_header({"VN": "Z:1.0"})
+///     >>>
+///     >>> # Write segment
+///     >>> segment = GfaSegment.from_line("S\tcontig1\tACGT")
+///     >>> writer.write_segment(segment)
+///     >>>
+///     >>> # Write link
+///     >>> link = GfaLink.from_line("L\tcontig1\t+\tcontig2\t+\t4M")
+///     >>> writer.write_link(link)
+///     >>>
+///     >>> writer.finish()
+#[pyclass(name = "GfaWriter", unsendable)]
+pub struct PyGfaWriter {
+    inner: Option<GfaWriter>,
+    path: String,
+}
+
+#[pymethods]
+impl PyGfaWriter {
+    /// Create a new GFA writer
+    ///
+    /// Args:
+    ///     path (str): Output file path
+    ///
+    /// Returns:
+    ///     GfaWriter: New writer instance
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be created
+    ///
+    /// Example:
+    ///     >>> writer = GfaWriter.create("output.gfa.gz")
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = GfaWriter::create(&path)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        Ok(PyGfaWriter {
+            inner: Some(writer),
+            path,
+        })
+    }
+
+    /// Write GFA header record
+    ///
+    /// Args:
+    ///     tags (dict[str, str]): Header tags (e.g., {"VN": "Z:1.0"})
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> writer.write_header({"VN": "Z:1.0"})
+    fn write_header(&mut self, tags: HashMap<String, String>) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer.write_header(tags)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Writer already closed"))
+        }
+    }
+
+    /// Write GFA segment record
+    ///
+    /// Args:
+    ///     segment (GfaSegment): Segment to write
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> segment = GfaSegment.from_line("S\tcontig1\tACGT")
+    ///     >>> writer.write_segment(segment)
+    fn write_segment(&mut self, segment: &PyGfaSegment) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let rust_segment = GfaSegment {
+                name: segment.name.clone(),
+                sequence: segment.sequence.clone(),
+                tags: segment.tags.clone(),
+            };
+            writer.write_segment(&rust_segment)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Writer already closed"))
+        }
+    }
+
+    /// Write GFA link record
+    ///
+    /// Args:
+    ///     link (GfaLink): Link to write
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> link = GfaLink.from_line("L\tcontig1\t+\tcontig2\t+\t4M")
+    ///     >>> writer.write_link(link)
+    fn write_link(&mut self, link: &PyGfaLink) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let from_orient = if link.from_orient == "+" {
+                Orientation::Forward
+            } else {
+                Orientation::Reverse
+            };
+            let to_orient = if link.to_orient == "+" {
+                Orientation::Forward
+            } else {
+                Orientation::Reverse
+            };
+
+            let rust_link = GfaLink {
+                from_segment: link.from_segment.clone(),
+                from_orient,
+                to_segment: link.to_segment.clone(),
+                to_orient,
+                overlap: link.overlap.clone(),
+                tags: link.tags.clone(),
+            };
+            writer.write_link(&rust_link)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Writer already closed"))
+        }
+    }
+
+    /// Write GFA path record
+    ///
+    /// Args:
+    ///     path (GfaPath): Path to write
+    ///
+    /// Raises:
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> path = GfaPath.from_line("P\tpath1\tcontig1+,contig2+\t4M")
+    ///     >>> writer.write_path(path)
+    fn write_path(&mut self, path: &PyGfaPath) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let rust_path = GfaPath {
+                name: path.name.clone(),
+                segments: path.segments.clone(),
+                overlaps: path.overlaps.clone(),
+                tags: path.tags.clone(),
+            };
+            writer.write_path(&rust_path)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Writer already closed"))
+        }
+    }
+
+    /// Get number of records written
+    ///
+    /// Returns:
+    ///     int: Number of records written so far
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Writer already closed"))
+        }
+    }
+
+    /// Finish writing and close file
+    ///
+    /// Must be called to ensure all data is written.
+    ///
+    /// Raises:
+    ///     IOError: If flush fails
+    ///
+    /// Example:
+    ///     >>> writer.finish()
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(mut writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>("Writer already closed"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("GfaWriter(path='{}')", self.path)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
     }
 }

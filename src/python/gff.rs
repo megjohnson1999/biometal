@@ -227,3 +227,97 @@ impl PyGff3Stream {
         "Gff3Stream(...)".to_string()
     }
 }
+
+// ============================================================================
+// Writer
+// ============================================================================
+
+use crate::formats::primitives::TabDelimitedWriter;
+
+/// Write GFF3 records to a file
+///
+/// Streaming writer for GFF3 format with automatic compression support.
+///
+/// Methods:
+///     create(path: str) -> Gff3Writer: Create writer for a file path
+///     stdout() -> Gff3Writer: Create writer for stdout
+///     write_record(record: Gff3Record): Write a single record
+///     records_written() -> int: Get count of written records
+///     finish(): Flush and close the writer
+///
+/// Example:
+///     >>> writer = Gff3Writer.create("output.gff3.gz")
+///     >>> for record in Gff3Stream.from_path("input.gff3"):
+///     ...     if record.feature_type == "gene":
+///     ...         writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "Gff3Writer", unsendable)]
+pub struct PyGff3Writer {
+    inner: Option<TabDelimitedWriter<Gff3Record>>,
+}
+
+#[pymethods]
+impl PyGff3Writer {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyGff3Writer { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyGff3Writer { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyGff3Record) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let strand = match record.strand.as_str() {
+                "+" => Strand::Forward,
+                "-" => Strand::Reverse,
+                _ => Strand::Unknown,
+            };
+
+            let rust_record = Gff3Record {
+                seqid: record.seqid.clone(),
+                source: record.source.clone(),
+                feature_type: record.feature_type.clone(),
+                start: record.start,
+                end: record.end,
+                score: record.score,
+                strand,
+                phase: record.phase,
+                attributes: record.attributes.clone(),
+            };
+
+            writer.write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Gff3Writer(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}

@@ -30,6 +30,20 @@ pub enum BiometalError {
         msg: String,
     },
 
+    /// Invalid SAM format
+    #[error("Invalid SAM format: {msg}")]
+    InvalidSamFormat {
+        /// Error message
+        msg: String,
+    },
+
+    /// Invalid CRAM format
+    #[error("Invalid CRAM format: {msg}")]
+    InvalidCramFormat {
+        /// Error message
+        msg: String,
+    },
+
     /// Compression/decompression error
     #[error("Compression error: {0}")]
     Compression(String),

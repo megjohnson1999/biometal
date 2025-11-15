@@ -663,3 +663,322 @@ impl PyNarrowPeakStream {
         "NarrowPeakStream(...)".to_string()
     }
 }
+
+// ============================================================================
+// Writers
+// ============================================================================
+
+use crate::formats::primitives::TabDelimitedWriter;
+
+/// Write BED3 records to a file
+///
+/// Streaming writer for BED3 format with automatic compression support.
+///
+/// Methods:
+///     create(path: str) -> Bed3Writer: Create writer for a file path
+///     stdout() -> Bed3Writer: Create writer for stdout
+///     write_record(record: Bed3Record): Write a single record
+///     records_written() -> int: Get count of written records
+///     finish(): Flush and close the writer
+///
+/// Example:
+///     >>> writer = Bed3Writer.create("output.bed.gz")
+///     >>> for i in range(3):
+///     ...     record = Bed3Record.from_line(f"chr{i+1}\t1000\t2000")
+///     ...     writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "Bed3Writer", unsendable)]
+pub struct PyBed3Writer {
+    inner: Option<TabDelimitedWriter<Bed3Record>>,
+}
+
+#[pymethods]
+impl PyBed3Writer {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyBed3Writer { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyBed3Writer { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyBed3Record) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let rust_record = Bed3Record {
+                interval: crate::formats::primitives::GenomicInterval {
+                    chrom: record.chrom.clone(),
+                    start: record.start,
+                    end: record.end,
+                },
+            };
+            writer.write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Bed3Writer(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}
+
+/// Write BED6 records to a file
+///
+/// Streaming writer for BED6 format with automatic compression support.
+///
+/// Example:
+///     >>> writer = Bed6Writer.create("output.bed.gz")
+///     >>> record = Bed6Record.from_line("chr1\t1000\t2000\tgene1\t100\t+")
+///     >>> writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "Bed6Writer", unsendable)]
+pub struct PyBed6Writer {
+    inner: Option<TabDelimitedWriter<Bed6Record>>,
+}
+
+#[pymethods]
+impl PyBed6Writer {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyBed6Writer { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyBed6Writer { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyBed6Record) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let strand = record.strand.as_ref().and_then(|s| match s.as_str() {
+                "+" => Some(Strand::Forward),
+                "-" => Some(Strand::Reverse),
+                "." => Some(Strand::Unknown),
+                _ => None,
+            });
+
+            let rust_record = Bed6Record {
+                bed3: Bed3Record {
+                    interval: crate::formats::primitives::GenomicInterval {
+                        chrom: record.chrom.clone(),
+                        start: record.start,
+                        end: record.end,
+                    },
+                },
+                name: record.name.clone(),
+                score: record.score,
+                strand,
+            };
+
+            writer.write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Bed6Writer(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}
+
+/// Write BED12 records to a file
+///
+/// Streaming writer for BED12 format with automatic compression support.
+///
+/// Example:
+///     >>> writer = Bed12Writer.create("output.bed.gz")
+///     >>> # Read from one file, write to another
+///     >>> for record in Bed12Stream.from_path("input.bed"):
+///     ...     writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "Bed12Writer", unsendable)]
+pub struct PyBed12Writer {
+    inner: Option<TabDelimitedWriter<Bed12Record>>,
+}
+
+#[pymethods]
+impl PyBed12Writer {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyBed12Writer { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyBed12Writer { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyBed12Record) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let strand = record.strand.as_ref().and_then(|s| match s.as_str() {
+                "+" => Some(Strand::Forward),
+                "-" => Some(Strand::Reverse),
+                "." => Some(Strand::Unknown),
+                _ => None,
+            });
+
+            let rust_record = Bed12Record {
+                bed6: Bed6Record {
+                    bed3: Bed3Record {
+                        interval: crate::formats::primitives::GenomicInterval {
+                            chrom: record.chrom.clone(),
+                            start: record.start,
+                            end: record.end,
+                        },
+                    },
+                    name: record.name.clone(),
+                    score: record.score,
+                    strand,
+                },
+                thick_start: record.thick_start,
+                thick_end: record.thick_end,
+                item_rgb: record.item_rgb.clone(),
+                block_count: record.block_count,
+                block_sizes: record.block_sizes.clone(),
+                block_starts: record.block_starts.clone(),
+            };
+
+            writer.write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Bed12Writer(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}
+
+/// Write narrowPeak records to a file
+///
+/// Streaming writer for ENCODE narrowPeak format with automatic compression support.
+///
+/// Example:
+///     >>> writer = NarrowPeakWriter.create("output.narrowPeak.gz")
+///     >>> for record in NarrowPeakStream.from_path("input.narrowPeak"):
+///     ...     if record.is_significant(2.0, 1.3):  # p<0.01, q<0.05
+///     ...         writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "NarrowPeakWriter", unsendable)]
+pub struct PyNarrowPeakWriter {
+    inner: Option<TabDelimitedWriter<NarrowPeakRecord>>,
+}
+
+#[pymethods]
+impl PyNarrowPeakWriter {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyNarrowPeakWriter { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyNarrowPeakWriter { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyNarrowPeakRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer.write_record(&record.inner)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("NarrowPeakWriter(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}

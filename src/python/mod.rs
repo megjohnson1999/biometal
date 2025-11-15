@@ -66,6 +66,10 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFastaStream>()?;
     m.add_class::<PyBamReader>()?;
 
+    // Register writer classes
+    m.add_class::<PyFastqWriter>()?;
+    m.add_class::<PyFastaWriter>()?;
+
     // Register BAM types
     m.add_class::<PyBamRecord>()?;
     m.add_class::<PyBamHeader>()?;
@@ -77,6 +81,8 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTag>()?;
     m.add_class::<PyTagValue>()?;
     m.add_class::<PySamWriter>()?;
+    m.add_class::<PyBamWriter>()?;
+    m.add_class::<PySamReader>()?;
 
     // Register BED format types
     m.add_class::<PyBed3Record>()?;
@@ -87,29 +93,38 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBed12Stream>()?;
     m.add_class::<PyNarrowPeakRecord>()?;
     m.add_class::<PyNarrowPeakStream>()?;
+    m.add_class::<PyBed3Writer>()?;
+    m.add_class::<PyBed6Writer>()?;
+    m.add_class::<PyBed12Writer>()?;
+    m.add_class::<PyNarrowPeakWriter>()?;
 
     // Register GFA format types
     m.add_class::<PyGfaSegment>()?;
     m.add_class::<PyGfaLink>()?;
     m.add_class::<PyGfaPath>()?;
     m.add_class::<PyGfaStream>()?;
+    m.add_class::<PyGfaWriter>()?;
 
     // Register VCF format types
     m.add_class::<PyVcfHeader>()?;
     m.add_class::<PyVcfRecord>()?;
     m.add_class::<PyVcfStream>()?;
+    m.add_class::<PyVcfWriter>()?;
 
     // Register GFF3 format types
     m.add_class::<PyGff3Record>()?;
     m.add_class::<PyGff3Stream>()?;
+    m.add_class::<PyGff3Writer>()?;
 
     // Register GTF format types
     m.add_class::<PyGtfRecord>()?;
     m.add_class::<PyGtfStream>()?;
+    m.add_class::<PyGtfWriter>()?;
 
     // Register PAF format types
     m.add_class::<PyPafRecord>()?;
     m.add_class::<PyPafStream>()?;
+    m.add_class::<PyPafWriter>()?;
 
     // Register FASTA index
     m.add_class::<PyFaiIndex>()?;

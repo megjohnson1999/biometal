@@ -106,8 +106,10 @@ pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
 simd-minimizers = { version = "2.2", optional = true }
 packed-seq = { version = "4.2", optional = true }
 
-# File format support: Use noodles directly (see docs/NOODLES_INTEGRATION.md)
-# No wrapper - direct noodles usage recommended for zero overhead
+# File format support
+# Note: Native CRAM implementation in progress (ARM-optimized, zero dependencies)
+bzip2 = "0.4"           # CRAM bzip2 codec (Phase 2)
+xz2 = "0.1"             # CRAM lzma codec (Phase 2)
 
 [dev-dependencies]
 criterion = "0.5"       # Benchmarking

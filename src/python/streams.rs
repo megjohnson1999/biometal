@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyStopIteration;
 use std::path::PathBuf;
-use crate::io::{FastqStream, FastaStream, CompressedReader};
+use crate::io::{FastqStream, FastaStream, FastqWriter, FastaWriter, CompressedReader};
 use crate::python::records::{PyFastqRecord, PyFastaRecord};
 
 /// Stream FASTQ records with constant memory
@@ -136,5 +136,330 @@ impl PyFastaStream {
 
     fn __repr__(&self) -> String {
         "FastaStream(...)".to_string()
+    }
+}
+
+/// Write FASTQ records with compression support
+///
+/// Writer that supports automatic compression based on file extension.
+/// Supports .fq, .fastq, .fq.gz, .fastq.gz, .fq.bgz, .fastq.bgz
+///
+/// Args:
+///     path (str): Path to output FASTQ file
+///
+/// Example:
+///     >>> writer = biometal.FastqWriter.create("output.fq.gz")
+///     >>> record = biometal.FastqRecord(...)
+///     >>> writer.write_record(record)
+///     >>> writer.finish()  # IMPORTANT: Flush and close
+///
+/// Note:
+///     The finish() method MUST be called to ensure all data is written.
+///     Alternatively, use context manager (not yet implemented).
+#[pyclass(name = "FastqWriter", unsendable)]
+pub struct PyFastqWriter {
+    inner: Option<FastqWriter>,
+}
+
+#[pymethods]
+impl PyFastqWriter {
+    /// Create FASTQ writer from file path
+    ///
+    /// Args:
+    ///     path (str): Path to output file
+    ///
+    /// Returns:
+    ///     FastqWriter: Writer instance
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be created
+    ///
+    /// Example:
+    ///     >>> writer = biometal.FastqWriter.create("output.fq.gz")
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let path_buf = PathBuf::from(path);
+        let writer = FastqWriter::create(&path_buf)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        Ok(PyFastqWriter {
+            inner: Some(writer),
+        })
+    }
+
+    /// Create FASTQ writer to stdout
+    ///
+    /// Returns:
+    ///     FastqWriter: Writer instance
+    ///
+    /// Raises:
+    ///     IOError: If stdout cannot be accessed
+    ///
+    /// Example:
+    ///     >>> writer = biometal.FastqWriter.stdout()
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = FastqWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        Ok(PyFastqWriter {
+            inner: Some(writer),
+        })
+    }
+
+    /// Write a single FASTQ record
+    ///
+    /// Args:
+    ///     record (FastqRecord): Record to write
+    ///
+    /// Raises:
+    ///     ValueError: If record is invalid
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> writer.write_record(record)
+    fn write_record(&mut self, record: &PyFastqRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let rust_record = record.to_fastq_record();
+            writer
+                .write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    /// Get the number of records written so far
+    ///
+    /// Returns:
+    ///     int: Number of records written
+    ///
+    /// Example:
+    ///     >>> count = writer.records_written()
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    /// Flush buffered data to disk
+    ///
+    /// Raises:
+    ///     IOError: If flush fails
+    ///
+    /// Example:
+    ///     >>> writer.flush()
+    fn flush(&mut self) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer
+                .flush()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    /// Finish writing and flush all data
+    ///
+    /// This method MUST be called to ensure all data is written to disk.
+    ///
+    /// Raises:
+    ///     IOError: If finish fails
+    ///
+    /// Example:
+    ///     >>> writer.finish()
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer
+                .finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        "FastqWriter(...)".to_string()
+    }
+}
+
+/// Write FASTA records with compression support
+///
+/// Writer that supports automatic compression based on file extension.
+/// Supports .fa, .fasta, .fa.gz, .fasta.gz, .fa.bgz, .fasta.bgz
+///
+/// Args:
+///     path (str): Path to output FASTA file
+///
+/// Example:
+///     >>> writer = biometal.FastaWriter.create("output.fa.gz")
+///     >>> record = biometal.FastaRecord(...)
+///     >>> writer.write_record(record)
+///     >>> writer.finish()  # IMPORTANT: Flush and close
+///
+/// Note:
+///     The finish() method MUST be called to ensure all data is written.
+///     By default, sequences are wrapped at 80 characters per line.
+#[pyclass(name = "FastaWriter", unsendable)]
+pub struct PyFastaWriter {
+    inner: Option<FastaWriter>,
+}
+
+#[pymethods]
+impl PyFastaWriter {
+    /// Create FASTA writer from file path
+    ///
+    /// Args:
+    ///     path (str): Path to output file
+    ///
+    /// Returns:
+    ///     FastaWriter: Writer instance
+    ///
+    /// Raises:
+    ///     IOError: If file cannot be created
+    ///
+    /// Example:
+    ///     >>> writer = biometal.FastaWriter.create("output.fa.gz")
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let path_buf = PathBuf::from(path);
+        let writer = FastaWriter::create(&path_buf)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        Ok(PyFastaWriter {
+            inner: Some(writer),
+        })
+    }
+
+    /// Create FASTA writer to stdout
+    ///
+    /// Returns:
+    ///     FastaWriter: Writer instance
+    ///
+    /// Raises:
+    ///     IOError: If stdout cannot be accessed
+    ///
+    /// Example:
+    ///     >>> writer = biometal.FastaWriter.stdout()
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = FastaWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+
+        Ok(PyFastaWriter {
+            inner: Some(writer),
+        })
+    }
+
+    /// Set the line width for sequence wrapping
+    ///
+    /// Args:
+    ///     width (int): Number of characters per line (use sys.maxsize to disable wrapping)
+    ///
+    /// Returns:
+    ///     FastaWriter: Self (for method chaining)
+    ///
+    /// Example:
+    ///     >>> writer = biometal.FastaWriter.create("output.fa").with_line_width(60)
+    fn with_line_width(mut slf: PyRefMut<'_, Self>, width: usize) -> PyRefMut<'_, Self> {
+        if let Some(writer) = slf.inner.take() {
+            slf.inner = Some(writer.with_line_width(width));
+        }
+        slf
+    }
+
+    /// Write a single FASTA record
+    ///
+    /// Args:
+    ///     record (FastaRecord): Record to write
+    ///
+    /// Raises:
+    ///     ValueError: If record is invalid
+    ///     IOError: If write fails
+    ///
+    /// Example:
+    ///     >>> writer.write_record(record)
+    fn write_record(&mut self, record: &PyFastaRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            let rust_record = record.to_fasta_record();
+            writer
+                .write_record(&rust_record)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    /// Get the number of records written so far
+    ///
+    /// Returns:
+    ///     int: Number of records written
+    ///
+    /// Example:
+    ///     >>> count = writer.records_written()
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    /// Flush buffered data to disk
+    ///
+    /// Raises:
+    ///     IOError: If flush fails
+    ///
+    /// Example:
+    ///     >>> writer.flush()
+    fn flush(&mut self) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer
+                .flush()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    /// Finish writing and flush all data
+    ///
+    /// This method MUST be called to ensure all data is written to disk.
+    ///
+    /// Raises:
+    ///     IOError: If finish fails
+    ///
+    /// Example:
+    ///     >>> writer.finish()
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer
+                .finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                "writer already finished",
+            ))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        "FastaWriter(...)".to_string()
     }
 }

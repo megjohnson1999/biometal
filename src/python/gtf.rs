@@ -248,3 +248,79 @@ impl PyGtfStream {
         "GtfStream(...)".to_string()
     }
 }
+
+// ============================================================================
+// Writer
+// ============================================================================
+
+use crate::formats::primitives::TabDelimitedWriter;
+
+/// Write GTF records to a file
+///
+/// Streaming writer for GTF format with automatic compression support.
+///
+/// Methods:
+///     create(path: str) -> GtfWriter: Create writer for a file path
+///     stdout() -> GtfWriter: Create writer for stdout
+///     write_record(record: GtfRecord): Write a single record
+///     records_written() -> int: Get count of written records
+///     finish(): Flush and close the writer
+///
+/// Example:
+///     >>> writer = GtfWriter.create("output.gtf.gz")
+///     >>> for record in GtfStream.from_path("input.gtf"):
+///     ...     if record.feature == "exon":
+///     ...         writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "GtfWriter", unsendable)]
+pub struct PyGtfWriter {
+    inner: Option<TabDelimitedWriter<GtfRecord>>,
+}
+
+#[pymethods]
+impl PyGtfWriter {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyGtfWriter { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyGtfWriter { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyGtfRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer.write_record(&record.inner)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("GtfWriter(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}

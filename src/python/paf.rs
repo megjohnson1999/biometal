@@ -232,3 +232,79 @@ impl PyPafStream {
         "PafStream(...)".to_string()
     }
 }
+
+// ============================================================================
+// Writer
+// ============================================================================
+
+use crate::formats::primitives::TabDelimitedWriter;
+
+/// Write PAF records to a file
+///
+/// Streaming writer for PAF (minimap2 alignment) format with automatic compression support.
+///
+/// Methods:
+///     create(path: str) -> PafWriter: Create writer for a file path
+///     stdout() -> PafWriter: Create writer for stdout
+///     write_record(record: PafRecord): Write a single record
+///     records_written() -> int: Get count of written records
+///     finish(): Flush and close the writer
+///
+/// Example:
+///     >>> writer = PafWriter.create("output.paf.gz")
+///     >>> for record in PafStream.from_path("input.paf"):
+///     ...     if record.is_high_quality(20):
+///     ...         writer.write_record(record)
+///     >>> writer.finish()
+#[pyclass(name = "PafWriter", unsendable)]
+pub struct PyPafWriter {
+    inner: Option<TabDelimitedWriter<PafRecord>>,
+}
+
+#[pymethods]
+impl PyPafWriter {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = TabDelimitedWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyPafWriter { inner: Some(writer) })
+    }
+
+    #[staticmethod]
+    fn stdout() -> PyResult<Self> {
+        let writer = TabDelimitedWriter::stdout()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyPafWriter { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyPafRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer.write_record(&record.inner)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn records_written(&self) -> PyResult<usize> {
+        if let Some(ref writer) = self.inner {
+            Ok(writer.records_written())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn finish(&mut self) -> PyResult<()> {
+        if let Some(writer) = self.inner.take() {
+            writer.finish()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("PafWriter(records_written={})",
+            self.inner.as_ref().map(|w| w.records_written()).unwrap_or(0))
+    }
+}

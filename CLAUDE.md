@@ -1,9 +1,33 @@
 # biometal: Claude Development Guide
 
 **Project**: biometal - ARM-native bioinformatics library
-**Latest Release**: v1.9.0 (November 14, 2025)
-**Current Focus**: Indexed random access (FAI and TBI for efficient region queries)
-**Phase**: Phase 2 Format Library Sprint - Week 2 complete (indices + integration examples)
+**Latest Release**: v1.10.0 (November 14, 2025)
+**Current Focus**: File format writing support (FASTQ, FASTA, BED, GTF, VCF)
+**Phase**: Phase 2 Format Library Sprint - Read parsers complete, adding write support
+
+---
+
+## ⚠️ CRITICAL CONSTRAINTS (READ THIS FIRST!)
+
+### DO NOT Recommend Performance Optimization (Rules 3+4)
+
+❌ **Rule 3 (Parallel BGZF)**: 0.77-0.84× **SLOWDOWN** - PERMANENTLY DISABLED
+- Conflicts with streaming architecture (Rule 5)
+- Experimentally validated as harmful (Nov 2025)
+- See STRATEGIC_PIVOT_PLAN.md for details
+
+❌ **Rule 4 (Smart mmap)**: ~1% benefit - NOT WORTH IT
+- Minimal impact for CPU-bound decompression
+- Complexity not justified by tiny gains
+
+### Current Strategic Focus: FORMAT LIBRARY, NOT Performance
+
+✅ **What biometal IS doing**: Building comprehensive format library with writing support
+✅ **What biometal is NOT doing**: Chasing marginal performance gains
+
+**Performance is already strong**: 92 MiB/s BAM parsing, 16-25× NEON speedup, constant 5 MB memory
+
+**See**: PHASE2_FORMAT_LIBRARY_SPRINT.md for current roadmap
 
 ---
 
@@ -78,7 +102,7 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
 
 ---
 
-## Current Status (v1.9.0)
+## Current Status (v1.10.0)
 
 ### Released Features
 - **FASTQ/FASTA** streaming parsers (constant memory)
@@ -86,38 +110,32 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
 - **Sequence manipulation** (reverse_complement, trimming, masking)
 - **K-mer operations** (extraction, minimizers, spectrum)
 - **Network streaming** (HTTP, SRA)
-- **BAM/SAM parser** (v1.4.0, November 8, 2025 - production-ready)
+- **BAM/SAM parser** (v1.4.0, production-ready)
   - Full BAM parsing (header, records, CIGAR, tags, sequences)
   - ARM NEON sequence decoding (+27.5% BAM parsing speedup)
   - SAM writing for downstream tools
   - Robustness features (oversized CIGAR, malformed record handling)
-  - 70 tests passing (integration complete)
-- **Python bindings** (PyO3 0.27, 70+ functions)
+- **Python bindings** (PyO3 0.27, 100+ functions)
   - Full BAM/FASTQ/FASTA support
   - CIGAR operations, SAM writing
-  - BED, GFA, VCF, GFF3 format support
+  - BED, GFA, VCF, GFF3, GTF, PAF, narrowPeak support
   - FAI and TBI index support
-- **Format Library (v1.8.0)**: Production-ready parsers for genomic annotation and assembly formats
-  - **BED (Browser Extensible Data)**: Genomic intervals (BED3/6/12 support)
-  - **GFA (Graphical Fragment Assembly)**: Assembly graphs (Segment/Link/Path records)
-  - **VCF (Variant Call Format)**: Genetic variants (VCF 4.2 spec compliance)
-  - **GFF3 (General Feature Format)**: Hierarchical gene annotations
-  - **Python gzip support**: All 4 formats support `.gz` files in Python
+- **Format Library (READ-ONLY)**: Production-ready streaming parsers
+  - **BED (BED3/6/12 + narrowPeak)**: Genomic intervals and ChIP-seq peaks (v1.8.0, v1.10.0)
+  - **GFA (Graphical Fragment Assembly)**: Assembly graphs (v1.8.0)
+  - **VCF (Variant Call Format)**: Genetic variants, VCF 4.2 spec (v1.8.0)
+  - **GFF3 (General Feature Format)**: Hierarchical gene annotations (v1.8.0)
+  - **GTF (Gene Transfer Format)**: RNA-seq gene annotations (v1.10.0)
+  - **PAF (Pairwise mApping Format)**: minimap2 long-read alignments (v1.10.0)
+  - **Python optimizations**: 50-60% memory reduction per record (v1.10.0)
   - **Property-based testing**: 23 tests validating format invariants
-  - **Real-world validation**: 6 integration tests with ENCODE, UCSC, Ensembl, 1000 Genomes data
-- **Index Support (v1.9.0)**: Efficient random access to genomic data
-  - **FAI (FASTA Index)**: O(1) random access to sequences and regions
-    - Build, load, and query FASTA indices
-    - Compatible with samtools faidx format
-    - ~200 bytes per sequence in memory
-  - **TBI (Tabix Index)**: O(log n) region queries on BGZF-compressed files
-    - Support for VCF, BED, GFF3 indices
-    - Hierarchical binning for fast queries
-    - 100-1000× speedup vs sequential scanning
-    - Compatible with samtools tabix format
-  - **Integration examples**: 3 Rust examples + 1 Python notebook
-  - **29 tests**: FAI and TBI unit + integration tests
-- **Tests**: 890 passing (670 unit + 211 doc + 23 property-based + 6 real-world integration)
+  - **Real-world validation**: 6 integration tests with ENCODE, UCSC, Ensembl, 1000 Genomes
+- **Index Support (v1.9.0)**: Efficient random access
+  - **FAI (FASTA Index)**: O(1) sequence/region access, samtools-compatible
+  - **TBI (Tabix Index)**: O(log n) region queries on BGZF files (VCF, BED, GFF3)
+  - 100-1000× speedup vs sequential scanning
+  - Integration examples: 3 Rust + 1 Python notebook
+- **Tests**: 551+ passing (library tests, see CHANGELOG.md for breakdown)
 
 ### Optimization Rules Implemented
 
@@ -135,34 +153,35 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
 **Rule 4**: Minimal benefit (~1%) for CPU-bound decompression workloads
 
 ### Distribution
-- **PyPI**: biometal-rs v1.9.0 (pip install biometal-rs)
-- **crates.io**: biometal v1.9.0 (cargo add biometal)
+- **PyPI**: biometal-rs v1.10.0 (pip install biometal-rs)
+- **crates.io**: biometal v1.10.0 (cargo add biometal)
 
 ---
 
 
 ## Current Work: Phase 2 Format Library Sprint
 
-**Status**: ✅ **Week 2 Complete** - Index support shipped in v1.9.0
+**Status**: ✅ **READ Parsers Complete** (v1.10.0) - Now adding WRITE support
 
-### Completed (v1.9.0)
-- ✅ BED format (BED3/6/12 variants, genomic intervals) - v1.8.0
-- ✅ GFA format (assembly graphs, Segment/Link/Path) - v1.8.0
-- ✅ VCF format (VCF 4.2 spec, variant calling) - v1.8.0
-- ✅ GFF3 format (hierarchical gene annotations) - v1.8.0
-- ✅ Python gzip support for all 4 formats - v1.8.0
-- ✅ Property-based testing framework (23 tests) - v1.8.0
-- ✅ Real-world data validation (6 integration tests) - v1.8.0
-- ✅ **FAI (FASTA Index)**: Build, load, query sequences/regions - v1.9.0
-- ✅ **TBI (Tabix Index)**: Region queries on BGZF files - v1.9.0
-- ✅ **Integration examples**: 3 Rust + 1 Python notebook - v1.9.0
-- ✅ **Python bindings**: FAI and TBI support - v1.9.0
+### Completed READ Parsers (v1.8.0 - v1.10.0)
+- ✅ BED format (BED3/6/12 + narrowPeak) - v1.8.0, v1.10.0
+- ✅ GFA format (assembly graphs) - v1.8.0
+- ✅ VCF format (VCF 4.2 spec) - v1.8.0
+- ✅ GFF3 format (hierarchical annotations) - v1.8.0
+- ✅ GTF format (RNA-seq annotations) - v1.10.0
+- ✅ PAF format (minimap2 alignments) - v1.10.0
+- ✅ FAI index (FASTA random access) - v1.9.0
+- ✅ TBI index (Tabix region queries) - v1.9.0
+- ✅ Python bindings optimization (50-60% memory reduction) - v1.10.0
+- ✅ Property-based testing (23 tests) - v1.8.0
+- ✅ Real-world validation (6 integration tests) - v1.8.0
 
-### In Progress
-- Additional formats (GTF, PAF, narrowPeak) - Week 3-6
-- Cross-format integration and workflows - Week 7-10
-- Python enhancements and documentation - Week 11-14
-- Performance benchmarking and v2.0.0 release - Week 15-16
+### Next: WRITE Support (In Progress)
+- ⏳ FASTQ/FASTA writing - Starting now
+- ⏳ BED/GFF/GTF writing - After FASTQ/FASTA
+- ⏳ VCF writing - After tab-delimited formats
+- ⏳ Python bindings for VCF, GFA, GFF - Feature parity
+- ⏳ BAM writing (optional) - Evaluate need
 
 ### Strategic Context
 
@@ -180,17 +199,26 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
 
 ---
 
-## Future Work
+## Next Steps: File Writing Support
 
-**Status**: Pending strategic direction decision
+**Current Focus**: Add WRITE support to existing formats (currently read-only)
 
-**Options** (see STRATEGIC_PIVOT_PLAN.md):
-- Format expansion (CRAM, VCF, BCF, CSI)
-- Community building (blog, social media, adoption)
-- Quality assurance (testing, cross-platform validation)
-- Maintenance mode (wait for community feedback)
+**Priority Order** (see discussion with user):
+1. **FASTQ/FASTA Writing** (10-15 hours) - Easiest, high value
+2. **BED/GFF/GTF Writing** (15-20 hours) - Tab-delimited, straightforward
+3. **VCF Writing** (20-30 hours) - Header management + compression
+4. **Python Bindings** for VCF, GFA, GFF (30-40 hours) - Feature parity
+5. **BAM Writing** (40-60 hours, optional) - Most complex, evaluate need
 
-**Decision Required**: Which direction should biometal pursue?
+**Why Writing Matters**:
+- Enables "read → filter → write" workflows
+- Currently users must use other tools for writing
+- Completes the format library story
+
+**NOT on Roadmap**:
+- ❌ CRAM format (complex, lower priority, defer)
+- ❌ Performance optimization (Rules 3+4 disabled)
+- ❌ GPU/Neural Engine work (archived)
 
 ---
 
@@ -226,10 +254,12 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
 - Production quality (error handling, docs, tests)
 
 **What NOT to Do**:
-- Don't make up optimization parameters (refer to evidence)
-- Don't accumulate records in memory (streaming only)
-- Don't panic in library code (use Result)
-- Don't implement ARM-only code without scalar fallback
+- ❌ **NEVER recommend Rules 3+4 performance optimization** (disabled, see top of document)
+- ❌ **NEVER suggest parallel BGZF or mmap for performance gains**
+- ❌ Don't make up optimization parameters (refer to evidence)
+- ❌ Don't accumulate records in memory (streaming only)
+- ❌ Don't panic in library code (use Result)
+- ❌ Don't implement ARM-only code without scalar fallback
 
 **Decision Framework**:
 When implementing features:
@@ -273,11 +303,93 @@ criterion_group!(benches, bench_operation);
 criterion_main!(benches);
 ```
 
+### Python Bindings Development
+
+**⚠️ CRITICAL: maturin develop Issue**
+
+When adding or updating Python bindings, `maturin develop` does **NOT** properly update the `.so` file in site-packages, even though it reports success. This was discovered on Nov 14, 2025 during FastqWriter/FastaWriter implementation.
+
+**The Problem**:
+- `maturin develop --release --features python` builds successfully
+- Reports "✏️ Setting installed package as editable"
+- BUT: The `.so` file in site-packages is NOT updated
+- Result: New Python classes don't appear in the module
+
+**The Solution** (Required after every Python binding change):
+
+**Option 1: Use the helper script** (recommended):
+```bash
+# Builds, copies .so, and verifies the class exists
+./.claude/scripts/update_python_bindings.sh YourNewClass
+```
+
+**Option 2: Manual steps**:
+```bash
+# 1. Build with maturin
+maturin develop --release --features python
+
+# 2. MANUALLY copy the .so file (REQUIRED!)
+cp target/release/libbiometal.dylib \
+   $(python3 -c "import site; print(site.getusersitepackages())")/biometal/biometal.cpython-314-darwin.so
+
+# 3. Verify the update worked
+python3 -c "import biometal; print(hasattr(biometal, 'YourNewClass'))"
+```
+
+**Quick verification script**:
+```bash
+# Check .so file timestamp
+stat -f "Modified: %Sm" $(python3 -c "import site; print(site.getsitepackages()[0])")/biometal/biometal.cpython-314-darwin.so
+
+# Should match or be newer than target build
+stat -f "Modified: %Sm" target/release/libbiometal.dylib
+```
+
+**Checklist for Python Binding Updates**:
+1. ✅ Implement PyO3 wrapper class with `#[pyclass(name = "ClassName", unsendable)]`
+2. ✅ Add methods with `#[pymethods]`
+3. ✅ Register in `src/python/mod.rs` with `m.add_class::<PyClassName>()?`
+4. ✅ Build: `maturin develop --release --features python`
+5. ✅ **MANUALLY copy .so file** (critical step!)
+6. ✅ Verify: `python3 -c "import biometal; print(hasattr(biometal, 'ClassName'))"`
+7. ✅ Test round-trip functionality
+
+**Example Python Binding Pattern** (FastaWriter):
+```rust
+// src/python/streams.rs
+#[pyclass(name = "FastaWriter", unsendable)]
+pub struct PyFastaWriter {
+    inner: Option<FastaWriter>,
+}
+
+#[pymethods]
+impl PyFastaWriter {
+    #[staticmethod]
+    fn create(path: String) -> PyResult<Self> {
+        let writer = FastaWriter::create(&PathBuf::from(path))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+        Ok(PyFastaWriter { inner: Some(writer) })
+    }
+
+    fn write_record(&mut self, record: &PyFastaRecord) -> PyResult<()> {
+        if let Some(ref mut writer) = self.inner {
+            writer.write_record(&record.to_fasta_record())
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyIOError, _>("writer already finished"))
+        }
+    }
+}
+
+// src/python/mod.rs
+m.add_class::<PyFastaWriter>()?;
+```
+
 ---
 
 ## Performance Expectations
 
-### Current Performance (v1.7.0)
+### Current Performance (v1.10.0)
 
 | Operation | Scalar | Optimized | Speedup |
 |-----------|--------|-----------|---------|
@@ -287,11 +399,11 @@ criterion_main!(benches);
 | BAM parsing | ~11 MiB/s | 92.0 MiB/s | **8.4× (BGZF + NEON + cloudflare_zlib)** |
 | BAM indexed query | O(n) full scan | O(log n) indexed | **1.68-500× (scales with file size)** |
 
-**Note**: No major performance optimizations remain viable:
-- Rule 3 (Parallel BGZF): Conflicts with streaming architecture (0.77-0.84× slowdown)
-- Rule 4 (Smart mmap): ~1% benefit for CPU-bound decompression
+**✅ Performance is COMPLETE**: No major optimizations remain viable
+- ❌ Rule 3 (Parallel BGZF): 0.77-0.84× slowdown (conflicts with streaming)
+- ❌ Rule 4 (Smart mmap): ~1% benefit (not worth complexity)
 
-**Focus**: Feature expansion (CRAM, VCF) and community adoption
+**Current Focus**: File format writing support (NOT performance optimization)
 
 ---
 
@@ -335,24 +447,25 @@ criterion_main!(benches);
 2. **Linux ARM** (Graviton): 6-10× NEON speedup (portable)
 3. **x86_64**: 1× scalar fallback (portable)
 
-### File Formats
+### File Formats (READ Support)
 - ✅ FASTQ, FASTA (v1.0.0)
-- ✅ BAM, SAM (v1.4.0)
+- ✅ BAM, SAM (v1.4.0) - SAM writing supported
 - ✅ BAI index (v1.6.0)
-- ✅ BED (BED3/6/12) (v1.8.0)
+- ✅ FAI, TBI indices (v1.9.0)
+- ✅ BED (BED3/6/12 + narrowPeak) (v1.8.0, v1.10.0)
 - ✅ GFA (Segment/Link/Path) (v1.8.0)
 - ✅ VCF (VCF 4.2) (v1.8.0)
 - ✅ GFF3 (hierarchical annotations) (v1.8.0)
-- ⏳ FAI, TBI indices (Phase 2 Week 2-3)
-- ⏳ GTF, PAF, narrowPeak (Phase 2 Week 4-8)
-- ❌ CRAM, BCF (future)
+- ✅ GTF (RNA-seq annotations) (v1.10.0)
+- ✅ PAF (minimap2 alignments) (v1.10.0)
+- ⏳ **WRITE Support**: In progress for FASTQ, FASTA, BED, GTF, VCF
+- ❌ CRAM, BCF (deferred - complex, lower priority)
 
 ### Tests
-- **860 passing** (100% pass rate)
-  - 649 unit tests (core + formats)
-  - 211 documentation tests
-  - 23 property-based tests (format invariants)
-  - 6 real-world integration tests (ENCODE, UCSC, Ensembl, 1000 Genomes)
+- **551+ passing** (100% pass rate)
+  - See CHANGELOG.md v1.10.0 for breakdown
+  - Property-based tests (format invariants)
+  - Real-world integration tests (ENCODE, UCSC, Ensembl, 1000 Genomes)
 
 ---
 
@@ -380,6 +493,7 @@ When wrapping up:
 
 ---
 
-**Last Updated**: November 14, 2025 (Phase 2 Week 1 complete, v1.8.0 released)
-**Current Phase**: Phase 2 Format Library Sprint (4 formats shipped, 12-15 weeks remaining)
-**Next Milestone**: Format utilities (FAI, TBI indices) - Week 2-3
+**Last Updated**: November 14, 2025 (v1.10.0 + FASTQ/FASTA writing support)
+**Current Phase**: Phase 2 Format Library Sprint - Adding WRITE support
+**Completed Today**: ✅ FASTQ/FASTA writers (Rust + Python bindings, all tests passing)
+**Next Milestone**: BED/GFF/GTF writing support (15-20 hours)

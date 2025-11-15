@@ -32,7 +32,7 @@ pub mod tab_delimited;
 // Re-exports
 pub use genomic::{GenomicInterval, Strand};
 pub use header::HeaderParser;
-pub use tab_delimited::{TabDelimitedParser, TabDelimitedRecord};
+pub use tab_delimited::{TabDelimitedParser, TabDelimitedRecord, TabDelimitedWriter};
 
 /// Errors that can occur when parsing bioinformatics formats.
 #[derive(Debug, Error)]

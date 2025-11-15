@@ -134,3 +134,13 @@ impl From<FastaRecord> for PyFastaRecord {
         }
     }
 }
+
+impl PyFastaRecord {
+    /// Convert PyFastaRecord to internal FastaRecord
+    pub(crate) fn to_fasta_record(&self) -> FastaRecord {
+        FastaRecord {
+            id: self.id.clone(),
+            sequence: self.sequence.clone(),
+        }
+    }
+}
