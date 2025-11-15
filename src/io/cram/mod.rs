@@ -1039,6 +1039,400 @@ impl SliceHeader {
     }
 }
 
+/// CRAM read feature.
+///
+/// Features describe how a read differs from the reference sequence.
+/// This is the core of CRAM's reference-based compression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CramFeature {
+    /// Base substitution: reference position + substituted base
+    Substitution {
+        /// Position in read (0-based)
+        position: i32,
+        /// Substituted base (A, C, G, T, N)
+        base: u8,
+    },
+    /// Insertion: reference position + inserted bases
+    Insertion {
+        /// Position in read (0-based)
+        position: i32,
+        /// Inserted bases
+        bases: Vec<u8>,
+    },
+    /// Deletion: reference position + deletion length
+    Deletion {
+        /// Position in read (0-based)
+        position: i32,
+        /// Number of bases deleted
+        length: i32,
+    },
+    /// Reference skip: reference position + skip length
+    ReferenceSkip {
+        /// Position in read (0-based)
+        position: i32,
+        /// Number of bases skipped
+        length: i32,
+    },
+    /// Soft clip: reference position + clipped bases
+    SoftClip {
+        /// Position in read (0-based)
+        position: i32,
+        /// Soft clipped bases
+        bases: Vec<u8>,
+    },
+    /// Hard clip: reference position + clip length
+    HardClip {
+        /// Position in read (0-based)
+        position: i32,
+        /// Number of bases hard clipped
+        length: i32,
+    },
+    /// Padding: reference position + padding length
+    Padding {
+        /// Position in read (0-based)
+        position: i32,
+        /// Padding length
+        length: i32,
+    },
+    /// Insert base: single base insertion
+    InsertBase {
+        /// Position in read (0-based)
+        position: i32,
+        /// Inserted base
+        base: u8,
+    },
+    /// Quality score: position + quality
+    QualityScore {
+        /// Position in read (0-based)
+        position: i32,
+        /// Quality score (Phred scale)
+        score: u8,
+    },
+    /// Read base: position + base
+    ReadBase {
+        /// Position in read (0-based)
+        position: i32,
+        /// Base at this position
+        base: u8,
+    },
+    /// Bases: stretch of bases (for unmapped reads)
+    Bases {
+        /// Position in read (0-based)
+        position: i32,
+        /// Bases
+        bases: Vec<u8>,
+    },
+    /// Scores: stretch of quality scores
+    Scores {
+        /// Position in read (0-based)
+        position: i32,
+        /// Quality scores
+        scores: Vec<u8>,
+    },
+}
+
+impl CramFeature {
+    /// Decode features for a single read from CRAM blocks.
+    ///
+    /// # Arguments
+    /// * `compression_header` - Compression header with encoding definitions
+    /// * `blocks` - Map of block_content_id -> block data
+    /// * `block_positions` - Current read positions in each block
+    ///
+    /// # Returns
+    /// Vector of features for this read
+    pub fn decode_features(
+        compression_header: &CompressionHeader,
+        blocks: &std::collections::HashMap<i32, &[u8]>,
+        block_positions: &mut std::collections::HashMap<i32, usize>,
+    ) -> Result<Vec<Self>> {
+        // Get encoding for feature count (FN)
+        let fn_encoding = compression_header
+            .data_series_encoding
+            .get(&DataSeries::FN)
+            .ok_or_else(|| BiometalError::InvalidCramFormat {
+                msg: "Missing FN (feature count) encoding".to_string(),
+            })?;
+
+        // Decode number of features for this read
+        let num_features = fn_encoding.decode_int(blocks, block_positions)?;
+
+        if num_features == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get encodings for feature codes and positions
+        let fc_encoding = compression_header
+            .data_series_encoding
+            .get(&DataSeries::FC)
+            .ok_or_else(|| BiometalError::InvalidCramFormat {
+                msg: "Missing FC (feature codes) encoding".to_string(),
+            })?;
+
+        let fp_encoding = compression_header
+            .data_series_encoding
+            .get(&DataSeries::FP)
+            .ok_or_else(|| BiometalError::InvalidCramFormat {
+                msg: "Missing FP (feature positions) encoding".to_string(),
+            })?;
+
+        let mut features = Vec::with_capacity(num_features as usize);
+
+        for _ in 0..num_features {
+            // Decode feature code
+            let code = fc_encoding.decode_byte(blocks, block_positions)? as char;
+
+            // Decode feature position
+            let position = fp_encoding.decode_int(blocks, block_positions)?;
+
+            // Decode feature data based on code
+            let feature = match code {
+                'B' => {
+                    // Base substitution: code + base
+                    let bs_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::BS)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing BS (base substitution) encoding".to_string(),
+                        })?;
+                    let base = bs_encoding.decode_byte(blocks, block_positions)?;
+                    Self::Substitution { position, base }
+                }
+                'X' => {
+                    // Read base: code + base
+                    let ba_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::BA)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing BA (bases) encoding".to_string(),
+                        })?;
+                    let base = ba_encoding.decode_byte(blocks, block_positions)?;
+                    Self::ReadBase { position, base }
+                }
+                'D' => {
+                    // Deletion: code + length
+                    let dl_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::DL)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing DL (deletion length) encoding".to_string(),
+                        })?;
+                    let length = dl_encoding.decode_int(blocks, block_positions)?;
+                    Self::Deletion { position, length }
+                }
+                'I' => {
+                    // Insertion: code + bases
+                    let in_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::IN)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing IN (insertion) encoding".to_string(),
+                        })?;
+                    let bases = in_encoding.decode_byte_array(blocks, block_positions)?;
+                    Self::Insertion { position, bases }
+                }
+                'i' => {
+                    // Insert base: code + single base
+                    let ba_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::BA)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing BA (bases) encoding".to_string(),
+                        })?;
+                    let base = ba_encoding.decode_byte(blocks, block_positions)?;
+                    Self::InsertBase { position, base }
+                }
+                'S' => {
+                    // Soft clip: code + bases
+                    let sc_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::SC)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing SC (soft clip) encoding".to_string(),
+                        })?;
+                    let bases = sc_encoding.decode_byte_array(blocks, block_positions)?;
+                    Self::SoftClip { position, bases }
+                }
+                'H' => {
+                    // Hard clip: code + length
+                    let hc_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::HC)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing HC (hard clip) encoding".to_string(),
+                        })?;
+                    let length = hc_encoding.decode_int(blocks, block_positions)?;
+                    Self::HardClip { position, length }
+                }
+                'P' => {
+                    // Padding: code + length
+                    let pd_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::PD)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing PD (padding) encoding".to_string(),
+                        })?;
+                    let length = pd_encoding.decode_int(blocks, block_positions)?;
+                    Self::Padding { position, length }
+                }
+                'N' => {
+                    // Reference skip: code + length
+                    let rs_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::RS)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing RS (reference skip) encoding".to_string(),
+                        })?;
+                    let length = rs_encoding.decode_int(blocks, block_positions)?;
+                    Self::ReferenceSkip { position, length }
+                }
+                'b' => {
+                    // Bases: code + bases
+                    let ba_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::BA)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing BA (bases) encoding".to_string(),
+                        })?;
+                    let bases = ba_encoding.decode_byte_array(blocks, block_positions)?;
+                    Self::Bases { position, bases }
+                }
+                'q' => {
+                    // Quality score: code + score
+                    let qs_encoding = compression_header
+                        .data_series_encoding
+                        .get(&DataSeries::QS)
+                        .ok_or_else(|| BiometalError::InvalidCramFormat {
+                            msg: "Missing QS (quality scores) encoding".to_string(),
+                        })?;
+                    let score = qs_encoding.decode_byte(blocks, block_positions)?;
+                    Self::QualityScore { position, score }
+                }
+                _ => {
+                    return Err(BiometalError::InvalidCramFormat {
+                        msg: format!("Unknown feature code: '{}'", code),
+                    })
+                }
+            };
+
+            features.push(feature);
+        }
+
+        Ok(features)
+    }
+
+    /// Apply features to reference sequence to reconstruct the actual read sequence.
+    ///
+    /// # Arguments
+    /// * `reference` - Reference sequence (ASCII bases)
+    /// * `features` - List of features describing differences from reference
+    /// * `read_length` - Expected length of the read
+    ///
+    /// # Returns
+    /// Reconstructed read sequence
+    pub fn apply_to_reference(
+        reference: &[u8],
+        features: &[Self],
+        read_length: usize,
+    ) -> Result<Vec<u8>> {
+        // Start with reference sequence
+        let mut sequence = reference.to_vec();
+
+        // Ensure sequence is long enough
+        if sequence.len() < read_length {
+            sequence.resize(read_length, b'N');
+        }
+
+        // Apply features in order
+        for feature in features {
+            match feature {
+                Self::Substitution { position, base } => {
+                    // Replace base at position
+                    let pos = *position as usize;
+                    if pos < sequence.len() {
+                        sequence[pos] = *base;
+                    }
+                }
+                Self::Insertion { position, bases } => {
+                    // Insert bases at position
+                    let pos = *position as usize;
+                    if pos <= sequence.len() {
+                        sequence.splice(pos..pos, bases.iter().copied());
+                    }
+                }
+                Self::Deletion { position, length } => {
+                    // Delete bases from position
+                    let pos = *position as usize;
+                    let len = *length as usize;
+                    if pos < sequence.len() {
+                        let end = (pos + len).min(sequence.len());
+                        sequence.drain(pos..end);
+                    }
+                }
+                Self::InsertBase { position, base } => {
+                    // Insert single base
+                    let pos = *position as usize;
+                    if pos <= sequence.len() {
+                        sequence.insert(pos, *base);
+                    }
+                }
+                Self::SoftClip { position, bases } => {
+                    // Soft clipped bases are part of the sequence
+                    let pos = *position as usize;
+                    if pos <= sequence.len() {
+                        sequence.splice(pos..pos, bases.iter().copied());
+                    }
+                }
+                Self::HardClip { .. } => {
+                    // Hard clips don't affect the sequence (bases not present)
+                }
+                Self::Padding { .. } => {
+                    // Padding doesn't affect the sequence
+                }
+                Self::ReferenceSkip { position, length } => {
+                    // Reference skip (like intron): remove from sequence
+                    let pos = *position as usize;
+                    let len = *length as usize;
+                    if pos < sequence.len() {
+                        let end = (pos + len).min(sequence.len());
+                        sequence.drain(pos..end);
+                    }
+                }
+                Self::ReadBase { position, base } => {
+                    // Explicit read base
+                    let pos = *position as usize;
+                    if pos < sequence.len() {
+                        sequence[pos] = *base;
+                    } else if pos == sequence.len() {
+                        sequence.push(*base);
+                    }
+                }
+                Self::Bases { position, bases } => {
+                    // Replace stretch of bases
+                    let pos = *position as usize;
+                    if pos < sequence.len() {
+                        let end = (pos + bases.len()).min(sequence.len());
+                        sequence.splice(pos..end, bases.iter().copied());
+                    } else {
+                        sequence.extend_from_slice(bases);
+                    }
+                }
+                Self::QualityScore { .. } => {
+                    // Quality scores don't affect the sequence
+                }
+                Self::Scores { .. } => {
+                    // Quality scores don't affect the sequence
+                }
+            }
+        }
+
+        // Truncate or pad to expected read length
+        sequence.resize(read_length, b'N');
+
+        Ok(sequence)
+    }
+}
+
 /// CRAM slice (header + blocks).
 ///
 /// A complete slice containing a header and all its data blocks.
