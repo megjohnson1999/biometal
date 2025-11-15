@@ -31,7 +31,7 @@
 
 | Format | Status | Next Steps | Effort |
 |--------|--------|------------|--------|
-| **CRAM** | Phase 1 Complete (v1.11.0+) | Phase 2: Full reference reconstruction + multi-codec | 20-30h |
+| **CRAM** | ❌ **BROKEN** (Real-world testing failed) | Fix sequence reconstruction + embedded reference + CIGAR | 24-36h |
 
 ### ❌ Not Implemented
 
@@ -112,10 +112,26 @@
   - **Overall impact**: ~10% CRAM parsing improvement (realistic, CRAM is I/O-bound)
   - **See**: CRAM_NEON_PHASE3_RESULTS.md for full analysis
 
+- **Real-World Testing Status**: ❌ **CRITICAL BUGS DISCOVERED** (Late November 15, 2025)
+  - ❌ Created test with real samtools-generated CRAM (105K file, 180 records)
+  - ❌ **Empty sequences**: All reads return `len: 0` instead of 100bp
+  - ❌ **Empty CIGAR**: All reads return `[]` instead of `100M`
+  - ✅ File structure parsing works (positions, ref IDs correct)
+  - ✅ samtools validates CRAM file is valid
+  - **Root Cause**: Not loading embedded reference, sequence reconstruction broken
+  - **Impact**: CRAM reader unusable for real-world files despite 38 passing unit tests
+  - **See**: CRAM_REAL_WORLD_TESTING.md for full analysis
+
+- **Required Fixes** (24-36 hours):
+  1. Embedded reference extraction and loading
+  2. Sequence reconstruction from reference + features
+  3. CIGAR construction from features
+  4. More real-world test cases
+
 - **Optional Future Work**:
-  - **Real-world file testing**: 1000 Genomes CRAM files
+  - **1000 Genomes testing**: After fixes complete
   - **Bit-level reader**: For HUFFMAN, BETA, GAMMA encodings (most files use EXTERNAL)
-  - **Full N=30 benchmarking**: Rigorous statistical analysis
+  - **Full N=30 benchmarking**: After decoder is functional
 
 ### ✅ BAM Writer (v1.8.0) - Previous Session
 - **Rust Implementation**: Production-ready
