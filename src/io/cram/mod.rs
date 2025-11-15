@@ -127,8 +127,76 @@ use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::fs::File;
 
+// htscodecs for CRAM 3.1 advanced compression (rANS, name tokenizer)
+use htscodecs_sys::rans_static4x16::rans_uncompress_4x16;
+use htscodecs_sys::tokenise_name3::decode_names;
+
 // ARM NEON optimizations (Phase 3)
 pub mod neon;
+
+// ============================================================================
+// htscodecs Safe Wrappers
+// ============================================================================
+
+/// Safe wrapper for rANS 4x16 decompression (CRAM method 5).
+///
+/// # Safety
+/// This function wraps the unsafe C FFI call to htscodecs.
+/// The C library allocates the output buffer with malloc(), which we must free.
+fn decompress_rans_4x16(compressed: &[u8]) -> Result<Vec<u8>> {
+    unsafe {
+        let mut out_size: u32 = 0;
+        let result_ptr = rans_uncompress_4x16(
+            compressed.as_ptr() as *mut u8,
+            compressed.len() as u32,
+            &mut out_size as *mut u32,
+        );
+
+        if result_ptr.is_null() {
+            return Err(BiometalError::Compression(
+                "rANS 4x16 decompression failed (null pointer returned)".to_string()
+            ));
+        }
+
+        // Convert C-allocated buffer to Rust Vec
+        let decompressed = std::slice::from_raw_parts(result_ptr, out_size as usize).to_vec();
+
+        // Free the C-allocated buffer
+        libc::free(result_ptr as *mut libc::c_void);
+
+        Ok(decompressed)
+    }
+}
+
+/// Safe wrapper for name tokenizer decompression (CRAM method 8).
+///
+/// # Safety
+/// This function wraps the unsafe C FFI call to htscodecs.
+/// The C library allocates the output buffer with malloc(), which we must free.
+fn decompress_name_tokenizer(compressed: &[u8]) -> Result<Vec<u8>> {
+    unsafe {
+        let mut out_len: u32 = 0;
+        let result_ptr = decode_names(
+            compressed.as_ptr() as *mut u8,
+            compressed.len() as u32,
+            &mut out_len as *mut u32,
+        );
+
+        if result_ptr.is_null() {
+            return Err(BiometalError::Compression(
+                "Name tokenizer decompression failed (null pointer returned)".to_string()
+            ));
+        }
+
+        // Convert C-allocated buffer to Rust Vec
+        let decompressed = std::slice::from_raw_parts(result_ptr, out_len as usize).to_vec();
+
+        // Free the C-allocated buffer
+        libc::free(result_ptr as *mut libc::c_void);
+
+        Ok(decompressed)
+    }
+}
 
 // ============================================================================
 // CRAM Container Structures
@@ -166,7 +234,7 @@ impl ContainerHeader {
     /// # Container Header Format
     ///
     /// ```text
-    /// - Length: i32 (4 bytes, big-endian)
+    /// - Length: i32 (4 bytes, **little-endian**)
     /// - Reference ID: ITF-8
     /// - Start position: ITF-8
     /// - Alignment span: ITF-8
@@ -175,16 +243,16 @@ impl ContainerHeader {
     /// - Bases: LTF-8
     /// - Number of blocks: ITF-8
     /// - Landmarks: ITF-8 count + ITF-8 array
-    /// - CRC32: u32 (4 bytes)
+    /// - CRC32: u32 (4 bytes, big-endian)
     /// ```
     pub fn parse<R: Read>(reader: &mut R) -> Result<Self> {
-        // Read length (4 bytes, big-endian)
+        // Read length (4 bytes, little-endian - CRAM uses LE for container length!)
         let mut length_buf = [0u8; 4];
         reader.read_exact(&mut length_buf)
             .map_err(|e| BiometalError::InvalidCramFormat {
                 msg: format!("Failed to read container length: {}", e)
             })?;
-        let length = i32::from_be_bytes(length_buf);
+        let length = i32::from_le_bytes(length_buf);
 
         // Check for EOF container (length == 0 or special EOF marker)
         if length == 0 {
@@ -251,11 +319,12 @@ impl ContainerHeader {
     /// Check if this is a SAM header container.
     ///
     /// SAM header containers have:
-    /// - reference_id = -1
+    /// - num_records = 0 (no alignment records, just header)
     /// - start_position = 0
-    /// - num_records = 0
+    ///
+    /// Note: Some implementations use ref_id=-1, others use ref_id=0
     pub fn is_sam_header_container(&self) -> bool {
-        self.reference_id == -1 && self.start_position == 0 && self.num_records == 0
+        self.num_records == 0 && self.start_position == 0
     }
 }
 
@@ -387,10 +456,30 @@ impl Block {
                 Ok(decompressed)
             }
             4 => {
-                // rANS (Phase 2)
+                // rANS 4x8 (CRAM 3.0)
                 Err(BiometalError::InvalidCramFormat {
-                    msg: "rANS compression not yet supported".to_string()
+                    msg: "rANS 4x8 compression not yet supported (requires htscodecs library)".to_string()
                 })
+            }
+            5 => {
+                // rANS 4x16 (CRAM 3.1)
+                decompress_rans_4x16(&self.data)
+            }
+            6 => {
+                // Adaptive arithmetic coder (CRAM 3.1)
+                Err(BiometalError::InvalidCramFormat {
+                    msg: "Adaptive arithmetic coding not yet supported (requires htscodecs library)".to_string()
+                })
+            }
+            7 => {
+                // fqzcomp (CRAM 3.1)
+                Err(BiometalError::InvalidCramFormat {
+                    msg: "FQZcomp compression not yet supported (requires htscodecs library)".to_string()
+                })
+            }
+            8 => {
+                // Name tokeniser (CRAM 3.1)
+                decompress_name_tokenizer(&self.data)
             }
             _ => {
                 Err(BiometalError::InvalidCramFormat {
@@ -506,6 +595,73 @@ impl DataSeries {
     }
 }
 
+/// Bit-level reader for CRAM encodings that require bit-level access (HUFFMAN, BETA, GAMMA, etc.)
+struct BitReader<'a> {
+    data: &'a [u8],
+    byte_pos: usize,
+    bit_pos: u8, // 0-7, position within current byte
+}
+
+impl<'a> BitReader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            byte_pos: 0,
+            bit_pos: 0,
+        }
+    }
+
+    /// Read up to 32 bits as a u32, MSB first
+    fn read_bits(&mut self, num_bits: u8) -> Result<u32> {
+        if num_bits == 0 || num_bits > 32 {
+            return Err(BiometalError::InvalidCramFormat {
+                msg: format!("Invalid bit count: {}", num_bits)
+            });
+        }
+
+        let mut result: u32 = 0;
+        let mut bits_remaining = num_bits;
+
+        while bits_remaining > 0 {
+            if self.byte_pos >= self.data.len() {
+                return Err(BiometalError::InvalidCramFormat {
+                    msg: "Attempted to read past end of data".to_string()
+                });
+            }
+
+            let current_byte = self.data[self.byte_pos];
+            let bits_available_in_byte = 8 - self.bit_pos;
+            let bits_to_read = std::cmp::min(bits_remaining, bits_available_in_byte);
+
+            // Extract bits from current byte (MSB first)
+            let shift = bits_available_in_byte - bits_to_read;
+            let mask = ((1u8 << bits_to_read) - 1) << shift;
+            let bits = (current_byte & mask) >> shift;
+
+            result = (result << bits_to_read) | (bits as u32);
+
+            self.bit_pos += bits_to_read;
+            if self.bit_pos >= 8 {
+                self.bit_pos = 0;
+                self.byte_pos += 1;
+            }
+
+            bits_remaining -= bits_to_read;
+        }
+
+        Ok(result)
+    }
+
+    /// Get current byte position (for updating block positions)
+    fn byte_position(&self) -> usize {
+        if self.bit_pos > 0 {
+            self.byte_pos + 1 // Round up if we've read any bits from next byte
+        } else {
+            self.byte_pos
+        }
+    }
+}
+
 /// CRAM encoding specification.
 ///
 /// Describes how a data series is encoded in CRAM blocks.
@@ -514,7 +670,7 @@ pub enum Encoding {
     /// NULL encoding (no data)
     Null,
     /// External encoding (data in external block)
-    External { block_content_id: i32 },
+    External { block_content_id: i32, offset: Option<i32> },
     /// Huffman encoding with code table
     Huffman {
         alphabet: Vec<i32>,
@@ -556,12 +712,18 @@ impl Encoding {
             buf[0]
         };
 
+        Self::parse_with_id(encoding_id, reader)
+    }
+
+    /// Parse encoding given the encoding ID (for when ID is already read)
+    fn parse_with_id<R: Read>(encoding_id: u8, reader: &mut R) -> Result<Self> {
         match encoding_id {
             0 => Ok(Self::Null),
             1 => {
                 // EXTERNAL: ITF-8 block_content_id
                 let block_content_id = decode_itf8(reader)?;
-                Ok(Self::External { block_content_id })
+                // No offset parameter - that was a red herring!
+                Ok(Self::External { block_content_id, offset: None })
             }
             2 => {
                 // GOLOMB: ITF-8 offset, ITF-8 M
@@ -586,9 +748,23 @@ impl Encoding {
                 })
             }
             4 => {
-                // BYTE_ARRAY_LEN: Encoding (len), Encoding (value)
-                let len_encoding = Box::new(Self::parse(reader)?);
-                let value_encoding = Box::new(Self::parse(reader)?);
+                // BYTE_ARRAY_LEN: encoding_id + param_size + params for len, then same for value
+                // Read len_encoding
+                let len_enc_id = decode_itf8(reader)?;
+                let len_param_size = decode_itf8(reader)?;
+                let mut len_param_data = vec![0u8; len_param_size as usize];
+                reader.read_exact(&mut len_param_data)?;
+                let mut len_param_reader = std::io::Cursor::new(&len_param_data);
+                let len_encoding = Box::new(Self::parse_with_id(len_enc_id as u8, &mut len_param_reader)?);
+
+                // Read value_encoding
+                let val_enc_id = decode_itf8(reader)?;
+                let val_param_size = decode_itf8(reader)?;
+                let mut val_param_data = vec![0u8; val_param_size as usize];
+                reader.read_exact(&mut val_param_data)?;
+                let mut val_param_reader = std::io::Cursor::new(&val_param_data);
+                let value_encoding = Box::new(Self::parse_with_id(val_enc_id as u8, &mut val_param_reader)?);
+
                 Ok(Self::ByteArrayLen {
                     len_encoding,
                     value_encoding,
@@ -631,6 +807,12 @@ impl Encoding {
                 let offset = decode_itf8(reader)?;
                 Ok(Self::Gamma { offset })
             }
+            10 => {
+                // DELTA: ITF-8 offset, ITF-8 K
+                let offset = decode_itf8(reader)?;
+                let k = decode_itf8(reader)?;
+                Ok(Self::Delta { offset, k })
+            }
             _ => Err(BiometalError::InvalidCramFormat {
                 msg: format!("Unknown encoding ID: {}", encoding_id),
             }),
@@ -656,7 +838,7 @@ impl Encoding {
     ) -> Result<i32> {
         match self {
             Self::Null => Ok(0),
-            Self::External { block_content_id } => {
+            Self::External { block_content_id, .. } => {
                 // Read ITF-8 from external block
                 let block_data = blocks.get(block_content_id)
                     .ok_or_else(|| BiometalError::InvalidCramFormat {
@@ -670,6 +852,40 @@ impl Encoding {
                 block_positions.insert(*block_content_id, new_pos);
 
                 Ok(value)
+            }
+            Self::Huffman { alphabet, bit_lengths } => {
+                // HUFFMAN encoding reads from core block (block 0)
+                let block_content_id = 0;
+                let block_data = blocks.get(&block_content_id)
+                    .ok_or_else(|| BiometalError::InvalidCramFormat {
+                        msg: "Core block (block 0) not found for HUFFMAN decoding".to_string()
+                    })?;
+
+                // Build Huffman tree/lookup
+                // For now, handle the simple case: single-symbol alphabet
+                if alphabet.len() == 1 {
+                    // Trivial Huffman: always returns the single symbol
+                    let symbol = alphabet[0];
+                    let bits = bit_lengths[0];
+
+                    // Still need to consume the bits from the stream
+                    let pos = block_positions.get(&block_content_id).copied().unwrap_or(0);
+                    let mut bit_reader = BitReader::new(&block_data[pos..]);
+
+                    // Read and discard the bits (we know the result)
+                    bit_reader.read_bits(bits as u8)?;
+
+                    // Update byte position
+                    let new_pos = pos + bit_reader.byte_position();
+                    block_positions.insert(block_content_id, new_pos);
+
+                    Ok(symbol)
+                } else {
+                    // TODO: Implement full Huffman decoding for multi-symbol alphabets
+                    Err(BiometalError::InvalidCramFormat {
+                        msg: format!("Multi-symbol HUFFMAN not yet implemented (alphabet size: {})", alphabet.len())
+                    })
+                }
             }
             _ => {
                 // Other encodings require bit-level reading, deferred to next iteration
@@ -688,7 +904,7 @@ impl Encoding {
     ) -> Result<u8> {
         match self {
             Self::Null => Ok(0),
-            Self::External { block_content_id } => {
+            Self::External { block_content_id, .. } => {
                 // Read single byte from external block
                 let block_data = blocks.get(block_content_id)
                     .ok_or_else(|| BiometalError::InvalidCramFormat {
@@ -788,16 +1004,21 @@ impl PreservationMap {
         let mut reader = Cursor::new(data);
         let mut map = Self::default();
 
+        eprintln!("[DEBUG] PreservationMap::parse: data.len()={}", data.len());
+
         // Read map size (number of entries)
         let map_size = decode_itf8(&mut reader)?;
+        eprintln!("[DEBUG] PreservationMap: map_size={}", map_size);
 
-        for _ in 0..map_size {
+        for i in 0..map_size {
             // Read 2-byte key
             let mut key = [0u8; 2];
             reader.read_exact(&mut key)
                 .map_err(|e| BiometalError::InvalidCramFormat {
                     msg: format!("Failed to read preservation map key: {}", e)
                 })?;
+
+            eprintln!("[DEBUG] PreservationMap entry {}: key={}{}", i, key[0] as char, key[1] as char);
 
             match &key {
                 b"RN" => {
@@ -837,14 +1058,19 @@ impl PreservationMap {
                     map.substitution_matrix = Some(matrix);
                 }
                 b"TD" => {
-                    // Tag IDs: array of 3-byte tag names
+                    // Tag IDs: array of ITF-8 encoded tag IDs
+                    // Each tag ID is encoded as an integer: (tag[0] << 16) | (tag[1] << 8) | tag[2]
                     let num_tags = decode_itf8(&mut reader)?;
-                    for _ in 0..num_tags {
-                        let mut tag = [0u8; 3];
-                        reader.read_exact(&mut tag)
-                            .map_err(|e| BiometalError::InvalidCramFormat {
-                                msg: format!("Failed to read tag ID: {}", e)
-                            })?;
+                    eprintln!("[DEBUG] TD: num_tags={}, remaining_bytes={}", num_tags, data.len() - reader.position() as usize);
+                    for j in 0..num_tags {
+                        let tag_id = decode_itf8(&mut reader)?;
+                        // Decode the tag ID back to 3 bytes
+                        let tag = [
+                            ((tag_id >> 16) & 0xFF) as u8,
+                            ((tag_id >> 8) & 0xFF) as u8,
+                            (tag_id & 0xFF) as u8,
+                        ];
+                        eprintln!("[DEBUG] TD tag {}: tag_id={}, chars={}{}{}", j, tag_id, tag[0] as char, tag[1] as char, tag[2] as char);
                         map.tag_ids.push(tag);
                     }
                 }
@@ -894,52 +1120,131 @@ impl CompressionHeader {
 
         // Parse preservation map
         let preservation_map_size = decode_itf8(&mut reader)?;
+        eprintln!("[DEBUG] CompressionHeader::parse: preservation_map_size={}", preservation_map_size);
         let mut preservation_map_data = vec![0u8; preservation_map_size as usize];
         reader.read_exact(&mut preservation_map_data)
             .map_err(|e| BiometalError::InvalidCramFormat {
                 msg: format!("Failed to read preservation map: {}", e)
             })?;
         let preservation_map = PreservationMap::parse(&preservation_map_data)?;
+        eprintln!("[DEBUG] Preservation map parsed successfully");
 
         // Parse data series encoding map
         let data_series_size = decode_itf8(&mut reader)?;
+        eprintln!("[DEBUG] data_series_size={}", data_series_size);
         let mut data_series_encoding = std::collections::HashMap::new();
         let data_series_start = reader.position() as usize;
         let data_series_end = data_series_start + data_series_size as usize;
 
         let mut data_series_reader = Cursor::new(&data[data_series_start..data_series_end]);
         let num_data_series = decode_itf8(&mut data_series_reader)?;
+        eprintln!("[DEBUG] Data series encoding: num_data_series={}", num_data_series);
 
-        for _ in 0..num_data_series {
+        // Dump first 50 bytes of data series section for debugging
+        let dump_len = std::cmp::min(50, data_series_end - data_series_start);
+        eprint!("[DEBUG] Data series section bytes (first {}): ", dump_len);
+        for i in 0..dump_len {
+            eprint!("{:02x} ", data[data_series_start + i]);
+            if i == 10 || i == 20 || i == 30 || i == 40 {
+                eprint!("\n[DEBUG]   ");
+            }
+        }
+        eprintln!();
+
+        for i in 0..num_data_series {
             // Read 2-byte data series key
             let mut key = [0u8; 2];
             data_series_reader.read_exact(&mut key)
                 .map_err(|e| BiometalError::InvalidCramFormat {
-                    msg: format!("Failed to read data series key: {}", e)
+                    msg: format!("Failed to read data series key {}: {}", i, e)
                 })?;
 
-            // Parse encoding for this data series
-            let encoding = Encoding::parse(&mut data_series_reader)?;
+            // Read encoding ID
+            let encoding_id = decode_itf8(&mut data_series_reader)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read encoding_id for DS {}: {}", i, e)
+                })?;
+
+            // Read codec parameter size
+            let param_size = decode_itf8(&mut data_series_reader)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read param_size for DS {}: {}", i, e)
+                })?;
+
+            if i < 10 {
+                eprintln!("[DEBUG] Data series {}: key=[0x{:02x}, 0x{:02x}] ('{}{}'), encoding_id={}, param_size={}",
+                    i, key[0], key[1],
+                    if key[0] >= 32 && key[0] < 127 { key[0] as char } else { '?' },
+                    if key[1] >= 32 && key[1] < 127 { key[1] as char } else { '?' },
+                    encoding_id, param_size);
+            }
+
+            // Read the codec parameters into a buffer
+            let mut param_data = vec![0u8; param_size as usize];
+            data_series_reader.read_exact(&mut param_data)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read encoding parameters for DS {}: {}", i, e)
+                })?;
+
+            // Parse encoding from the parameter data
+            let mut param_reader = std::io::Cursor::new(&param_data);
+            let encoding = Encoding::parse_with_id(encoding_id as u8, &mut param_reader)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to parse encoding for DS {} (key={}{}, enc_id={}, param_size={}): {}",
+                        i,
+                        if key[0] >= 32 && key[0] < 127 { key[0] as char } else { '?' },
+                        if key[1] >= 32 && key[1] < 127 { key[1] as char } else { '?' },
+                        encoding_id, param_size, e)
+                })?;
+
             data_series_encoding.insert(DataSeries::from_bytes(key), encoding);
         }
 
-        reader.set_position((data_series_end) as u64);
+        // Advance main reader by the bytes consumed by data_series_reader
+        let bytes_consumed = data_series_reader.position() as usize;
+        reader.set_position((data_series_start + bytes_consumed) as u64);
 
         // Parse tag encoding map
         let tag_encoding_size = decode_itf8(&mut reader)?;
+        eprintln!("[DEBUG] CompressionHeader: tag_encoding_size={}, data.len()={}, current_pos={}",
+            tag_encoding_size, data.len(), reader.position());
         let mut tag_encoding = std::collections::HashMap::new();
         let tag_encoding_start = reader.position() as usize;
         let tag_encoding_end = tag_encoding_start + tag_encoding_size as usize;
 
+        eprintln!("[DEBUG] Tag encoding range: {}..{} (data available: {})",
+            tag_encoding_start, tag_encoding_end, data.len());
+
         let mut tag_reader = Cursor::new(&data[tag_encoding_start..tag_encoding_end]);
         let num_tags = decode_itf8(&mut tag_reader)?;
+        eprintln!("[DEBUG] num_tags={}", num_tags);
 
-        for _ in 0..num_tags {
+        for i in 0..num_tags {
             // Read tag ID (ITF-8)
             let tag_id = decode_itf8(&mut tag_reader)?;
 
-            // Parse encoding for this tag
-            let encoding = Encoding::parse(&mut tag_reader)?;
+            // Read encoding ID
+            let encoding_id = decode_itf8(&mut tag_reader)?;
+
+            // Read codec parameter size
+            let param_size = decode_itf8(&mut tag_reader)?;
+
+            if i < 3 {
+                eprintln!("[DEBUG] Tag {}: tag_id={}, encoding_id={}, param_size={}",
+                    i, tag_id, encoding_id, param_size);
+            }
+
+            // Read the codec parameters
+            let mut param_data = vec![0u8; param_size as usize];
+            tag_reader.read_exact(&mut param_data)
+                .map_err(|e| BiometalError::InvalidCramFormat {
+                    msg: format!("Failed to read tag encoding parameters: {}", e)
+                })?;
+
+            // Parse encoding from the parameter data
+            let mut param_reader = std::io::Cursor::new(&param_data);
+            let encoding = Encoding::parse_with_id(encoding_id as u8, &mut param_reader)?;
+
             tag_encoding.insert(tag_id, encoding);
         }
 
@@ -1011,9 +1316,19 @@ impl SliceHeader {
         // Read number of blocks
         let num_blocks = decode_itf8(reader)?;
 
+        // Read number of content IDs (HTSlib has this as a separate field)
+        let num_content_ids = decode_itf8(reader)?;
+
+        // Validate num_content_ids
+        if num_content_ids < 1 || num_content_ids > 9999 {
+            return Err(BiometalError::InvalidCramFormat {
+                msg: format!("Invalid num_content_ids: {} (expected 1-9999)", num_content_ids)
+            });
+        }
+
         // Read block content IDs
-        let mut block_content_ids = Vec::with_capacity(num_blocks as usize);
-        for _ in 0..num_blocks {
+        let mut block_content_ids = Vec::with_capacity(num_content_ids as usize);
+        for _ in 0..num_content_ids {
             block_content_ids.push(decode_itf8(reader)?);
         }
 
@@ -1711,17 +2026,58 @@ impl Slice {
         reference_path: Option<&PathBuf>,
         header_references: &[crate::io::bam::Reference],
     ) -> Result<Vec<u8>> {
-        // Phase 2: Basic reference fetching
+        // Delegate to decode_sequence_with_length using slice span
+        self.decode_sequence_with_length(
+            _record_index,
+            self.header.alignment_span,
+            reference_index,
+            reference_path,
+            header_references,
+        )
+    }
+
+    /// Decode sequence with explicit read length.
+    ///
+    /// **Phase 2 Full Implementation**: Uses RL (read length) from data series.
+    ///
+    /// # Arguments
+    ///
+    /// * `record_index` - Index of record within slice (0-based)
+    /// * `read_length` - Read length for this record (from RL data series)
+    /// * `reference_index` - Optional reference FASTA index
+    /// * `reference_path` - Optional reference FASTA file path
+    /// * `header_references` - Reference names from BAM header
+    ///
+    /// # Returns
+    ///
+    /// Decoded sequence as bytes (ASCII: A, C, G, T, N)
+    fn decode_sequence_with_length(
+        &self,
+        record_index: usize,
+        read_length: i32,
+        reference_index: Option<&FaiIndex>,
+        reference_path: Option<&PathBuf>,
+        header_references: &[crate::io::bam::Reference],
+    ) -> Result<Vec<u8>> {
+        // Phase 2: Basic reference fetching with per-record read length
         // TODO Phase 2 full: Decode CRAM features and apply to reference
 
+        eprintln!("[DEBUG] decode_sequence_with_length: record={}, read_length={}, ref_id={}, start={}",
+            record_index, read_length, self.header.reference_id, self.header.alignment_start);
+
         if let (Some(index), Some(ref_path)) = (reference_index, reference_path) {
-            // Fetch reference sequence for alignment span
+            // Fetch reference sequence for read length
             if self.header.reference_id >= 0 {
                 let ref_id = self.header.reference_id as usize;
 
                 if let Some(ref_info) = header_references.get(ref_id) {
-                    let start = self.header.alignment_start as u64;
-                    let end = (self.header.alignment_start + self.header.alignment_span) as u64;
+                    // Use alignment start from slice + record offset
+                    // For now, using slice start; TODO: decode AP (alignment position) for exact start
+                    let start = (self.header.alignment_start + record_index as i32) as u64;
+                    let end = start + read_length as u64;
+
+                    eprintln!("[DEBUG] Fetching reference: chr={}, start={}, end={} (length={})",
+                        ref_info.name, start, end, read_length);
 
                     // Fetch reference subsequence
                     let sequence = index.fetch_region(
@@ -1731,13 +2087,22 @@ impl Slice {
                         ref_path,
                     )?;
 
+                    eprintln!("[DEBUG] Fetched sequence length: {}", sequence.len());
                     return Ok(sequence.into_bytes());
+                } else {
+                    eprintln!("[DEBUG] Reference ID {} not found in header", ref_id);
                 }
+            } else {
+                eprintln!("[DEBUG] Unmapped read (ref_id < 0)");
             }
+        } else {
+            eprintln!("[DEBUG] No reference available: index={}, path={}",
+                reference_index.is_some(), reference_path.is_some());
         }
 
         // Fallback: Return placeholder sequence
         // TODO Phase 2: Decode from blocks when reference not available
+        eprintln!("[DEBUG] Returning empty sequence (fallback)");
         Ok(Vec::new())
     }
 
@@ -1884,7 +2249,7 @@ impl Slice {
                     if let Some(tag_encoding) = compression_header.tag_encoding.get(&tag_id) {
                         // Decode tag value based on encoding
                         match tag_encoding {
-                            Encoding::External { block_content_id } => {
+                            Encoding::External { block_content_id, .. } => {
                                 // Most common case: tag value in external block
                                 let tag_name = format!("tag_{}", tag_id);
 
@@ -2198,6 +2563,103 @@ impl CramReader<BufReader<File>> {
 }
 
 impl<R: Read> CramReader<R> {
+    /// Parse SAM header from CRAM file's header container.
+    ///
+    /// Reads the SAM header container, decompresses it, and extracts reference information.
+    fn parse_sam_header(reader: &mut R) -> Result<Header> {
+        // Read container header
+        let container_header = ContainerHeader::parse(reader)?;
+
+        eprintln!("[DEBUG] First container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
+            container_header.reference_id, container_header.start_position,
+            container_header.num_records, container_header.length,
+            container_header.is_sam_header_container());
+
+        // Verify this is a SAM header container
+        if !container_header.is_sam_header_container() {
+            return Err(BiometalError::InvalidCramFormat {
+                msg: format!("Expected SAM header container, got ref_id={}, pos={}, num_records={}",
+                    container_header.reference_id, container_header.start_position,
+                    container_header.num_records)
+            });
+        }
+
+        // Read the entire container data (length bytes)
+        let mut container_data = vec![0u8; container_header.length as usize];
+        reader.read_exact(&mut container_data)
+            .map_err(|e| BiometalError::InvalidCramFormat {
+                msg: format!("Failed to read SAM header container data: {}", e)
+            })?;
+
+        eprintln!("[DEBUG] Container data length: {}", container_data.len());
+
+        // The container data contains a compression header block followed by SAM header block
+        let mut cursor = std::io::Cursor::new(&container_data);
+
+        // Read compression header block
+        let compression_block = Block::parse(&mut cursor)?;
+        eprintln!("[DEBUG] Compression block: method={}, content_type={}, size={}",
+            compression_block.method, compression_block.content_type, compression_block.data.len());
+
+        // Decompress compression header - it contains both compression metadata AND SAM header text
+        let compression_header_data = compression_block.decompress()?;
+        eprintln!("[DEBUG] Decompressed compression header length: {}", compression_header_data.len());
+
+        // The compression header structure for SAM header containers is:
+        // - First 4 bytes: ITF-8 encoded length or marker
+        // - Followed by SAM header text (@HD, @SQ, @PG lines)
+        //
+        // Skip the first 4 bytes and extract the SAM header text
+        let sam_header_start = 4;
+        let sam_header_bytes = &compression_header_data[sam_header_start..];
+
+        // Find where the SAM header ends (before any additional compression metadata)
+        // SAM headers end with a newline and don't have null bytes
+        let sam_header_end = sam_header_bytes.iter()
+            .position(|&b| b == 0)
+            .unwrap_or(sam_header_bytes.len());
+
+        let sam_header_data = &sam_header_bytes[..sam_header_end];
+
+        // Convert to SAM header string
+        let sam_header_text = String::from_utf8(sam_header_data.to_vec())
+            .map_err(|e| BiometalError::InvalidCramFormat {
+                msg: format!("Invalid UTF-8 in SAM header: {}", e)
+            })?;
+
+        eprintln!("[DEBUG] Extracted SAM header text ({} chars):\n{}", sam_header_text.len(), sam_header_text);
+
+        // Parse @SQ lines to extract reference information
+        let mut references = Vec::new();
+        for line in sam_header_text.lines() {
+            if line.starts_with("@SQ") {
+                // Parse @SQ line: @SQ\tSN:chr1\tLN:248956422
+                let mut name = None;
+                let mut length = None;
+
+                for field in line.split('\t').skip(1) {
+                    if let Some(value) = field.strip_prefix("SN:") {
+                        name = Some(value.to_string());
+                    } else if let Some(value) = field.strip_prefix("LN:") {
+                        length = value.parse::<usize>().ok();
+                    }
+                }
+
+                if let (Some(ref_name), Some(ref_length)) = (name, length) {
+                    eprintln!("[DEBUG] Found reference: {} (length: {})", ref_name, ref_length);
+                    references.push(crate::io::bam::Reference {
+                        name: ref_name,
+                        length: ref_length as u32,
+                    });
+                }
+            }
+        }
+
+        eprintln!("[DEBUG] Parsed {} references from SAM header", references.len());
+
+        Ok(Header::new(sam_header_text, references))
+    }
+
     /// Create CRAM reader from any Read source.
     ///
     /// **Implementation Status**: Phase 1 - Basic structure
@@ -2286,12 +2748,8 @@ impl<R: Read> CramReader<R> {
                 msg: format!("Failed to read CRAM file ID: {}", e)
             })?;
 
-        // TODO Phase 1, Task 2: Parse SAM header container
-        // For now, create placeholder header
-        let header = Header::new(
-            String::from("@HD\tVN:1.6\n"),
-            vec![],
-        );
+        // Parse SAM header container
+        let header = Self::parse_sam_header(&mut reader)?;
 
         Ok(CramReader {
             reader,
@@ -2453,6 +2911,10 @@ impl<R: Read> CramReader<R> {
             reference_index: self.reference_index,
             reference_path: self.reference_path,
             header: self.header,
+            current_compression_header: None,
+            block_positions: std::collections::HashMap::new(),
+            decompressed_blocks: Vec::new(),
+            block_id_to_index: std::collections::HashMap::new(),
         }
     }
 }
@@ -2482,6 +2944,14 @@ pub struct CramRecords<R: Read> {
     reference_path: Option<PathBuf>,
     /// BAM-compatible header (for reference names)
     header: Header,
+    /// Current compression header (encoding specifications for current container)
+    current_compression_header: Option<CompressionHeader>,
+    /// Block read positions (track current read position in each block by content_id)
+    block_positions: std::collections::HashMap<i32, usize>,
+    /// Decompressed block data (stored to provide stable references)
+    decompressed_blocks: Vec<Vec<u8>>,
+    /// Block ID to decompressed data index mapping
+    block_id_to_index: std::collections::HashMap<i32, usize>,
 }
 
 impl<R: Read> CramRecords<R> {
@@ -2495,15 +2965,22 @@ impl<R: Read> CramRecords<R> {
 
         // Try to read next container header
         let container_header = match ContainerHeader::parse(&mut self.reader) {
-            Ok(header) => header,
+            Ok(header) => {
+                eprintln!("[DEBUG] Read container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
+                    header.reference_id, header.start_position, header.num_records,
+                    header.length, header.is_sam_header_container());
+                header
+            }
             Err(e) => {
                 // Check if this is EOF
                 if e.to_string().contains("EOF container") {
+                    eprintln!("[DEBUG] Reached EOF container");
                     self.reached_eof = true;
                     return Ok(None);
                 }
                 // Check for end of file
                 if e.to_string().contains("failed to fill whole buffer") {
+                    eprintln!("[DEBUG] Reached end of file (no more containers)");
                     self.reached_eof = true;
                     return Ok(None);
                 }
@@ -2523,13 +3000,76 @@ impl<R: Read> CramRecords<R> {
             return self.read_next_slice();
         }
 
-        // Read compression header block
-        let _compression_header_block = Block::parse(&mut self.reader)?;
-        // TODO Phase 2: Parse compression header for full decoding
+        // Read and parse compression header block
+        eprintln!("[DEBUG] Reading compression header block...");
+        let compression_header_block = Block::parse(&mut self.reader)?;
+        eprintln!("[DEBUG] Compression header block: method={}, size={}, uncompressed={}",
+            compression_header_block.method, compression_header_block.compressed_size,
+            compression_header_block.uncompressed_size);
 
-        // For Phase 1: Read first slice from container
-        // In reality, containers can have multiple slices, but for Phase 1 we'll read one
-        let slice = Slice::parse(&mut self.reader)?;
+        // Decompress and parse the compression header
+        eprintln!("[DEBUG] Decompressing compression header...");
+        let compression_header_data = compression_header_block.decompress()?;
+        eprintln!("[DEBUG] Decompressed size: {}", compression_header_data.len());
+
+        eprintln!("[DEBUG] Parsing compression header...");
+        let compression_header = CompressionHeader::parse(&compression_header_data)?;
+
+        eprintln!("[DEBUG] Parsed compression header with {} data series encodings",
+            compression_header.data_series_encoding.len());
+
+        // Store compression header for decoding records
+        self.current_compression_header = Some(compression_header);
+
+        // Read first slice block from container
+        // The slice is contained within a Block structure
+        eprintln!("[DEBUG] Reading slice block...");
+        let slice_block = Block::parse(&mut self.reader)?;
+        eprintln!("[DEBUG] Slice block: method={}, size={}, uncompressed={}",
+            slice_block.method, slice_block.compressed_size,
+            slice_block.uncompressed_size);
+
+        // Decompress the slice block to get slice header + data
+        let slice_data = slice_block.decompress()?;
+        eprintln!("[DEBUG] Decompressed slice data: {} bytes", slice_data.len());
+        eprintln!("[DEBUG] Slice data (first 40 bytes): {:02x?}", &slice_data[..std::cmp::min(40, slice_data.len())]);
+
+        // Parse slice HEADER ONLY from decompressed data
+        let mut slice_reader = std::io::Cursor::new(&slice_data);
+        let slice_header = SliceHeader::parse(&mut slice_reader)?;
+
+        eprintln!("[DEBUG] Slice header: ref_id={}, start={}, span={}, num_records={}, num_blocks={}",
+            slice_header.reference_id, slice_header.alignment_start, slice_header.alignment_span,
+            slice_header.num_records, slice_header.num_blocks);
+        eprintln!("[DEBUG] Block content IDs: {:?}", slice_header.block_content_ids);
+
+        // Read the slice data blocks from the container (num_blocks blocks)
+        let mut blocks = Vec::with_capacity(slice_header.num_blocks as usize);
+        eprintln!("[DEBUG] Reading {} slice data blocks from container...", slice_header.num_blocks);
+        for i in 0..slice_header.num_blocks {
+            let block = Block::parse(&mut self.reader)?;
+            eprintln!("[DEBUG]   Block {}: id={}, method={}, size={}", i, block.block_id, block.method, block.compressed_size);
+            blocks.push(block);
+        }
+
+        // Create the slice from header + blocks
+        let slice = Slice {
+            header: slice_header,
+            blocks,
+        };
+
+        // Decompress all blocks and store them for decoding
+        self.decompressed_blocks.clear();
+        self.block_id_to_index.clear();
+        self.block_positions.clear();
+
+        for (index, block) in slice.blocks.iter().enumerate() {
+            let decompressed = block.decompress()?;
+            self.decompressed_blocks.push(decompressed);
+            self.block_id_to_index.insert(block.block_id, index);
+        }
+
+        eprintln!("[DEBUG] Decompressed {} blocks for slice", self.decompressed_blocks.len());
 
         Ok(Some(slice))
     }
@@ -2549,9 +3089,41 @@ impl<R: Read> Iterator for CramRecords<R> {
                     let record_index = self.current_slice_index;
                     self.current_slice_index += 1;
 
-                    // Phase 2: Decode sequence from reference
-                    let sequence = match slice.decode_sequence(
+                    // Create blocks HashMap from decompressed blocks
+                    let blocks: std::collections::HashMap<i32, &[u8]> = self.block_id_to_index
+                        .iter()
+                        .map(|(&block_id, &index)| {
+                            (block_id, self.decompressed_blocks[index].as_slice())
+                        })
+                        .collect();
+
+                    // Decode read length (RL) for this record
+                    let read_length = if let Some(ref comp_header) = self.current_compression_header {
+                        // Get RL encoding from compression header
+                        if let Some(rl_encoding) = comp_header.data_series_encoding.get(&DataSeries::RL) {
+                            match rl_encoding.decode_int(&blocks, &mut self.block_positions) {
+                                Ok(rl) => {
+                                    eprintln!("[DEBUG] Decoded RL for record {}: {}", record_index, rl);
+                                    rl
+                                }
+                                Err(e) => {
+                                    eprintln!("[DEBUG] Failed to decode RL: {}, using slice span", e);
+                                    slice.header.alignment_span
+                                }
+                            }
+                        } else {
+                            eprintln!("[DEBUG] No RL encoding in compression header, using slice span");
+                            slice.header.alignment_span
+                        }
+                    } else {
+                        eprintln!("[DEBUG] No compression header available, using slice span");
+                        slice.header.alignment_span
+                    };
+
+                    // Phase 2: Decode sequence from reference using read_length
+                    let sequence = match slice.decode_sequence_with_length(
                         record_index,
+                        read_length,
                         self.reference_index.as_ref(),
                         self.reference_path.as_ref(),
                         &self.header.references,
@@ -3292,7 +3864,7 @@ mod tests {
         // Check data series encoding
         assert_eq!(header.data_series_encoding.len(), 1);
         assert!(header.data_series_encoding.contains_key(&super::DataSeries::BF));
-        if let Some(super::Encoding::External { block_content_id }) = header.data_series_encoding.get(&super::DataSeries::BF) {
+        if let Some(super::Encoding::External { block_content_id, .. }) = header.data_series_encoding.get(&super::DataSeries::BF) {
             assert_eq!(*block_content_id, 1);
         } else {
             panic!("Expected External encoding for BF");
@@ -3301,7 +3873,7 @@ mod tests {
         // Check tag encoding
         assert_eq!(header.tag_encoding.len(), 1);
         assert!(header.tag_encoding.contains_key(&100));
-        if let Some(super::Encoding::External { block_content_id }) = header.tag_encoding.get(&100) {
+        if let Some(super::Encoding::External { block_content_id, .. }) = header.tag_encoding.get(&100) {
             assert_eq!(*block_content_id, 2);
         } else {
             panic!("Expected External encoding for tag 100");

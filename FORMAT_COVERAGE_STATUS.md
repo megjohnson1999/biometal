@@ -112,26 +112,42 @@
   - **Overall impact**: ~10% CRAM parsing improvement (realistic, CRAM is I/O-bound)
   - **See**: CRAM_NEON_PHASE3_RESULTS.md for full analysis
 
-- **Real-World Testing Status**: ❌ **CRITICAL BUGS DISCOVERED** (Late November 15, 2025)
-  - ❌ Created test with real samtools-generated CRAM (105K file, 180 records)
-  - ❌ **Empty sequences**: All reads return `len: 0` instead of 100bp
-  - ❌ **Empty CIGAR**: All reads return `[]` instead of `100M`
-  - ✅ File structure parsing works (positions, ref IDs correct)
-  - ✅ samtools validates CRAM file is valid
-  - **Root Cause**: Not loading embedded reference, sequence reconstruction broken
-  - **Impact**: CRAM reader unusable for real-world files despite 38 passing unit tests
-  - **See**: CRAM_REAL_WORLD_TESTING.md for full analysis
+- **Real-World Testing Status**: ⏳ **MAJOR PROGRESS - Debugging In Progress** (November 15, 2025)
 
-- **Required Fixes** (24-36 hours):
-  1. Embedded reference extraction and loading
-  2. Sequence reconstruction from reference + features
-  3. CIGAR construction from features
-  4. More real-world test cases
+  **Phase 1: Format Discovery** (3-4 hours, COMPLETE ✅):
+  - ✅ Fixed container length endianness bug (big→little endian)
+  - ✅ Successfully extracted SAM header from compression header block
+  - ✅ Discovered HTSlib format for data series encodings (encoding_id + param_size + params)
+  - ✅ Fixed BYTE_ARRAY_LEN recursive parsing (sub-encodings use same format)
+  - ✅ Successfully parsed all 21 data series encodings
+  - ✅ Fixed slice header parsing (added missing num_content_ids field)
+  - ✅ Fixed slice structure (slice header block + separate data blocks from container)
+
+  **Phase 2: Advanced Codec Integration** (2-3 hours, COMPLETE ✅):
+  - ✅ Added htscodecs-sys library (Rust bindings to C htscodecs)
+  - ✅ Implemented safe wrappers for rANS 4x16 decompression (method 5)
+  - ✅ Implemented safe wrappers for name tokenizer (method 8)
+  - ✅ Successfully decompressing all 9 slice data blocks
+  - ✅ CRAM 3.1 advanced codecs now supported
+
+  **Phase 3: Decoder Logic** (IN PROGRESS ⏳):
+  - ✅ Implemented BitReader for bit-level operations
+  - ✅ Implemented HUFFMAN decoding (single-symbol alphabets)
+  - ⏳ **Current blocker**: HUFFMAN block routing (RL data series fails to read from correct block)
+  - Block 0 (core) is empty (size=0), but HUFFMAN decoder assumes block 0
+  - Need to extract block_content_id from HUFFMAN encoding parameters
+
+  **Remaining Work** (8-12 hours estimated):
+  - Fix HUFFMAN block routing to use correct external blocks
+  - Implement full HUFFMAN decoding for multi-symbol alphabets
+  - Fix sequence reconstruction from reference + features
+  - Fix CIGAR construction from features
+  - Validate output matches samtools
 
 - **Optional Future Work**:
-  - **1000 Genomes testing**: After fixes complete
-  - **Bit-level reader**: For HUFFMAN, BETA, GAMMA encodings (most files use EXTERNAL)
-  - **Full N=30 benchmarking**: After decoder is functional
+  - **1000 Genomes testing**: After decoder complete
+  - **Full N=30 benchmarking**: After decoder functional
+  - **Performance optimization**: ARM NEON for data series decoding
 
 ### ✅ BAM Writer (v1.8.0) - Previous Session
 - **Rust Implementation**: Production-ready

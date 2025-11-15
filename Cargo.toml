@@ -107,9 +107,10 @@ simd-minimizers = { version = "2.2", optional = true }
 packed-seq = { version = "4.2", optional = true }
 
 # File format support
-# Note: Native CRAM implementation in progress (ARM-optimized, zero dependencies)
+# Note: Native CRAM implementation in progress (ARM-optimized)
 bzip2 = "0.4"           # CRAM bzip2 codec (Phase 2)
 xz2 = "0.1"             # CRAM lzma codec (Phase 2)
+htscodecs-sys = "1.2"   # CRAM 3.1 advanced codecs (rANS 4x16, name tokenizer, etc.)
 
 [dev-dependencies]
 criterion = "0.5"       # Benchmarking

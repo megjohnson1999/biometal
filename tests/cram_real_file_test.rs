@@ -20,6 +20,11 @@ fn test_read_real_cram_file() {
         Ok(mut cram) => {
             println!("✓ Successfully opened CRAM file");
 
+            // Set reference FASTA for sequence reconstruction
+            cram.set_reference("tests/data/mini_reference.fa")
+                .expect("Failed to load reference");
+            println!("✓ Loaded reference FASTA");
+
             // Try to iterate records
             let mut record_count = 0;
             let mut errors = Vec::new();
