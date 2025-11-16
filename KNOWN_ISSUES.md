@@ -2,9 +2,68 @@
 
 ## Python Bindings
 
-### SAM Reader Python Binding Registration Issue
+### ✅ RESOLVED: PyO3 Registration Bug (SAM Reader, GFA Writer, BAM Writer)
 
-**Status**: Under Investigation
+**Status**: ✅ RESOLVED
+**Resolution Date**: November 16, 2025
+**Original Date**: November 14-15, 2025
+
+#### Resolution Summary
+All three previously failing Python bindings (PySamReader, PyGfaWriter, PyBamWriter) are now fully functional after fixing a type error in `src/python/gtf.rs`.
+
+#### Root Cause
+A compilation error in `src/python/gtf.rs` line 126 was preventing successful PyO3 linking:
+```rust
+// BEFORE (incorrect):
+fn transcript_id(&self) -> String {
+    self.inner.transcript_id().to_string()  // Error: Option<&str> has no to_string()
+}
+
+// AFTER (correct):
+fn transcript_id(&self) -> Option<String> {
+    self.inner.transcript_id().map(|s| s.to_string())
+}
+```
+
+#### Verification
+All three classes tested and verified functional (November 16, 2025):
+
+✅ **BamWriter**: Complete write/read roundtrip verified
+```python
+reader = biometal.BamReader.from_path("input.bam")
+writer = biometal.BamWriter.create("output.bam", reader.header)
+for record in reader:
+    writer.write_record(record)
+writer.finish()
+```
+
+✅ **SamReader**: Can read SAM files, access headers, iterate records
+```python
+reader = biometal.SamReader.from_path("input.sam")
+print(reader.header.reference_count)
+for record in reader:
+    print(record.name)
+```
+
+✅ **GfaWriter**: Can create and write GFA files
+```python
+writer = biometal.GfaWriter.create("output.gfa.gz")
+writer.finish()
+```
+
+#### Lessons Learned
+1. PyO3 compilation errors can cause linking failures that prevent class registration
+2. The error was not in the failing classes themselves, but in an unrelated file (gtf.rs)
+3. Using `maturin build` instead of `cargo build --features python` properly handles PyO3 linking
+4. Always verify .so file is updated after build (see CLAUDE.md Python Bindings section)
+
+---
+
+## Historical Documentation (RESOLVED ISSUES)
+
+### SAM Reader Python Binding Registration Issue (RESOLVED)
+
+**Status**: ✅ RESOLVED
 **Severity**: Low (Rust implementation fully functional)
 **Date**: November 14, 2025
 

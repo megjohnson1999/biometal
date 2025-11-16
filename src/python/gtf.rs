@@ -122,8 +122,8 @@ impl PyGtfRecord {
         self.inner.gene_id().to_string()
     }
 
-    fn transcript_id(&self) -> String {
-        self.inner.transcript_id().to_string()
+    fn transcript_id(&self) -> Option<String> {
+        self.inner.transcript_id().map(|s| s.to_string())
     }
 
     fn gene_name(&self) -> Option<String> {
