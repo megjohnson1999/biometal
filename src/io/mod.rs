@@ -38,3 +38,9 @@ pub use bam::BamReader;
 // Uses noodles-cram for CRAM 3.0/3.1 support
 pub mod cram;
 pub use cram::CramReader;
+
+// BCF implementation (v1.12.0+)
+// Binary Variant Call Format - compressed VCF
+// Native implementation with typed value system and BGZF compression
+pub mod bcf;
+pub use bcf::BcfReader;
