@@ -61,6 +61,7 @@ pub mod bed;
 pub mod bed_writer;
 pub mod gfa;
 pub mod gff;
+pub mod gff_writer;
 pub mod gtf;
 pub mod index;
 pub mod paf;
