@@ -21,19 +21,18 @@
 
 ### Index Formats
 
-| Format | Read | Write | Status |
-|--------|------|-------|--------|
-| **BAI** (BAM index) | ✅ v1.6.0 | ❌ | Read-only (sufficient) |
-| **FAI** (FASTA index) | ✅ v1.9.0 | ❌ | Read-only (sufficient) |
-| **TBI** (Tabix) | ✅ v1.9.0 | ❌ | Read-only (sufficient) |
-| **CSI** (Coordinate-sorted index) | ⏳ Partial | ❌ | Not complete |
+| Format | Read | Write | Python Bindings | Status |
+|--------|------|-------|-----------------|--------|
+| **BAI** (BAM index) | ✅ v1.6.0 | ❌ | ✅ | Read-only (sufficient) |
+| **FAI** (FASTA index) | ✅ v1.9.0 | ❌ | ✅ | Read-only (sufficient) |
+| **TBI** (Tabix) | ✅ v1.9.0 | ❌ | ✅ | Read-only (sufficient) |
+| **CSI** (Coordinate-sorted index) | ✅ v1.11.0 **NEW** | ❌ | ❌ (PyO3 link issue) | Rust read-only, Production ready |
 
 ### ❌ Not Implemented
 
 | Format | Priority | Effort | Reason |
 |--------|----------|--------|---------|
 | **BCF** (Binary VCF) | MEDIUM | 30-40h | Binary compression, BGZF |
-| **CSI** (Complete) | LOW | 20-30h | Less common than BAI |
 
 ---
 
@@ -144,9 +143,33 @@
   - ✅ 30,693 records decoded successfully (100% success rate)
   - ✅ 615 library tests passing
 
+- **Phase 4: Code Quality & Test Stabilization** (November 15, 2025 Evening, ~3 hours, COMPLETE ✅):
+  - ✅ **Fixed all failing CRAM tests** (6→0 failures)
+    - Fixed `test_compression_header_with_data()` (proper ITF-8 encoding for size fields)
+    - Fixed `test_slice_header_basic()` (added missing `num_content_ids` field)
+    - Fixed `test_slice_header_no_optional_md5()` (corrected slice header structure)
+    - Fixed `test_slice_parsing_with_blocks()` (sequential block content IDs)
+    - Fixed `test_slice_empty_external_blocks()` (proper helper function encoding)
+    - Fixed `test_record_iteration_basic()` (use `make_minimal_valid_cram()` helper)
+  - ✅ **Created test helper functions** with proper ITF-8/LTF-8 encoding
+    - `make_minimal_valid_cram(major, minor, sam_header)` - Complete CRAM file structure
+    - `make_container_header()` - Proper container headers with ITF-8/LTF-8
+    - `make_slice_header()` - Complete slice headers with all required fields
+  - ✅ **Test suite status**: 626 passing / 0 failing (46 CRAM tests, up from 40)
+  - ✅ **Code quality improvements**:
+    - Removed TODO comments from production code
+    - Added field documentation to Encoding enum variants
+    - Fixed FFI mutable pointer cast safety issues
+    - Gated debug print statements with `cram-debug` feature flag
+  - ✅ **Benchmark infrastructure**:
+    - Created `examples/cram_benchmark.rs` for performance testing
+    - Created `benchmarks/cram_comparison.sh` for vs-samtools comparison
+    - Ready for N=30 performance validation (pending EOF handling fix)
+
 - **Optional Future Work**:
-  - **1000 Genomes testing**: After decoder complete
-  - **Full N=30 benchmarking**: After decoder functional
+  - **EOF handling refinement**: Iterator should gracefully handle end-of-file
+  - **1000 Genomes testing**: Download alternative CRAM files for large-scale validation
+  - **Full N=30 benchmarking**: After EOF issue resolved
   - **Performance optimization**: ARM NEON for data series decoding
 
 ### ✅ BAM Writer (v1.8.0) - Previous Session

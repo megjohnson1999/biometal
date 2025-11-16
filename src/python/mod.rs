@@ -22,6 +22,7 @@ mod gtf;
 mod paf;
 mod fasta;
 mod tbi;
+mod csi;
 
 pub use records::*;
 pub use streams::*;
@@ -40,6 +41,7 @@ pub use gtf::*;
 pub use paf::*;
 pub use fasta::*;
 pub use tbi::*;
+pub use csi::*;
 
 /// biometal: ARM-native bioinformatics library
 ///
@@ -131,6 +133,10 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register TBI index
     m.add_class::<PyTbiIndex>()?;
+
+    // Register CSI index
+    m.add_class::<PyCsiIndex>()?;
+    m.add_class::<PyCsiChunk>()?;
 
     // Register operations
     m.add_function(wrap_pyfunction!(py_gc_content, m)?)?;
