@@ -197,13 +197,13 @@ impl BcfRecord {
         let mut cursor = std::io::Cursor::new(buf);
 
         let mut samples = vec![HashMap::new(); header.n_samples()];
-
         // Read FORMAT fields
-        for _ in 0..shared.n_fmt {
+        // BCF encodes FORMAT as: [key1, all_samples_data1, key2, all_samples_data2, ...]
+        for _i in 0..shared.n_fmt {
             // Read FORMAT key (index)
             let key_value = TypedValue::read(&mut cursor)?;
             let key_idx = key_value.as_int().ok_or_else(|| BiometalError::InvalidInput {
-                msg: "Expected integer for FORMAT key".to_string(),
+                msg: format!("Expected integer for FORMAT key, got {:?}", key_value),
             })? as usize;
 
             let key_name =
@@ -213,10 +213,116 @@ impl BcfRecord {
                         msg: format!("Unknown FORMAT index: {}", key_idx),
                     })?;
 
-            // Read values for all samples
-            for sample_idx in 0..header.n_samples() {
-                let value = TypedValue::read(&mut cursor)?;
-                samples[sample_idx].insert(key_name.to_string(), value);
+            // Read type byte for this FORMAT field
+            // For FORMAT fields, the length encodes values PER SAMPLE, not total values
+            let mut type_byte_buf = [0u8; 1];
+            cursor.read_exact(&mut type_byte_buf)?;
+            let type_byte = type_byte_buf[0];
+            let value_type = crate::io::bcf::ValueType::from_u8(type_byte)?;
+            let length_per_sample = ((type_byte >> 4) & 0x0F) as usize;
+
+            // Total values = length_per_sample * n_samples
+            let total_values = length_per_sample * header.n_samples();
+
+            // Read all values as a single array
+            let mut all_values_i8 = Vec::new();
+            let mut all_values_i16 = Vec::new();
+            let mut all_values_i32 = Vec::new();
+            let mut all_values_f32 = Vec::new();
+
+            match value_type {
+                crate::io::bcf::ValueType::Int8 => {
+                    for _ in 0..total_values {
+                        let mut buf = [0u8; 1];
+                        cursor.read_exact(&mut buf)?;
+                        all_values_i8.push(i8::from_le_bytes(buf));
+                    }
+                }
+                crate::io::bcf::ValueType::Int16 => {
+                    for _ in 0..total_values {
+                        let mut buf = [0u8; 2];
+                        cursor.read_exact(&mut buf)?;
+                        all_values_i16.push(i16::from_le_bytes(buf));
+                    }
+                }
+                crate::io::bcf::ValueType::Int32 => {
+                    for _ in 0..total_values {
+                        let mut buf = [0u8; 4];
+                        cursor.read_exact(&mut buf)?;
+                        all_values_i32.push(i32::from_le_bytes(buf));
+                    }
+                }
+                crate::io::bcf::ValueType::Float => {
+                    for _ in 0..total_values {
+                        let mut buf = [0u8; 4];
+                        cursor.read_exact(&mut buf)?;
+                        all_values_f32.push(f32::from_le_bytes(buf));
+                    }
+                }
+                crate::io::bcf::ValueType::Char => {
+                    // String handling would go here
+                    return Err(BiometalError::InvalidInput {
+                        msg: "Char type not yet supported for FORMAT fields".to_string(),
+                    });
+                }
+            }
+
+            // Distribute the data to individual samples
+            if !all_values_i8.is_empty() {
+                // Distribute Int8 values
+                if length_per_sample == 1 {
+                    // Simple case: one value per sample
+                    for (sample_idx, &val) in all_values_i8.iter().enumerate() {
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Int8(val));
+                    }
+                } else {
+                    // Multi-value case (e.g., GT with 2 alleles): store as array for each sample
+                    for sample_idx in 0..header.n_samples() {
+                        let start = sample_idx * length_per_sample;
+                        let end = start + length_per_sample;
+                        let sample_values: Vec<i8> = all_values_i8[start..end].to_vec();
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Int8Array(sample_values));
+                    }
+                }
+            } else if !all_values_i16.is_empty() {
+                if length_per_sample == 1 {
+                    for (sample_idx, &val) in all_values_i16.iter().enumerate() {
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Int16(val));
+                    }
+                } else {
+                    for sample_idx in 0..header.n_samples() {
+                        let start = sample_idx * length_per_sample;
+                        let end = start + length_per_sample;
+                        let sample_values: Vec<i16> = all_values_i16[start..end].to_vec();
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Int16Array(sample_values));
+                    }
+                }
+            } else if !all_values_i32.is_empty() {
+                if length_per_sample == 1 {
+                    for (sample_idx, &val) in all_values_i32.iter().enumerate() {
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Int32(val));
+                    }
+                } else {
+                    for sample_idx in 0..header.n_samples() {
+                        let start = sample_idx * length_per_sample;
+                        let end = start + length_per_sample;
+                        let sample_values: Vec<i32> = all_values_i32[start..end].to_vec();
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Int32Array(sample_values));
+                    }
+                }
+            } else if !all_values_f32.is_empty() {
+                if length_per_sample == 1 {
+                    for (sample_idx, &val) in all_values_f32.iter().enumerate() {
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::Float(val));
+                    }
+                } else {
+                    for sample_idx in 0..header.n_samples() {
+                        let start = sample_idx * length_per_sample;
+                        let end = start + length_per_sample;
+                        let sample_values: Vec<f32> = all_values_f32[start..end].to_vec();
+                        samples[sample_idx].insert(key_name.to_string(), TypedValue::FloatArray(sample_values));
+                    }
+                }
             }
         }
 
