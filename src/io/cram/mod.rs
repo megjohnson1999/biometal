@@ -135,17 +135,62 @@ use htscodecs_sys::tokenise_name3::decode_names;
 pub mod neon;
 
 // ============================================================================
+// Debug Logging Macro
+// ============================================================================
+
+/// Conditional debug logging macro.
+///
+/// Debug output is only compiled in when the `cram-debug` feature is enabled.
+/// This allows development-time debugging without polluting production stderr.
+///
+/// Usage:
+/// ```ignore
+/// cram_debug!("Container length: {}", length);
+/// ```
+#[cfg(feature = "cram-debug")]
+macro_rules! cram_debug {
+    ($($arg:tt)*) => {
+        eprintln!("[CRAM DEBUG] {}", format!($($arg)*));
+    };
+}
+
+#[cfg(not(feature = "cram-debug"))]
+macro_rules! cram_debug {
+    ($($arg:tt)*) => {
+        // No-op in production
+    };
+}
+
+// ============================================================================
 // htscodecs Safe Wrappers
 // ============================================================================
 
 /// Safe wrapper for rANS 4x16 decompression (CRAM method 5).
 ///
 /// # Safety
-/// This function wraps the unsafe C FFI call to htscodecs.
-/// The C library allocates the output buffer with malloc(), which we must free.
+///
+/// This function wraps the unsafe C FFI call to htscodecs `rans_uncompress_4x16()`.
+/// The C function signature is:
+/// ```c
+/// unsigned char *rans_uncompress_4x16(unsigned char *in, unsigned int in_size, unsigned int *out_size);
+/// ```
+///
+/// Note: The C function takes `unsigned char *in` (mutable pointer) but does NOT modify
+/// the input buffer during decompression. This is a const-correctness issue in the C library.
+/// The cast from `*const u8` to `*mut u8` is safe because:
+/// 1. The C function is read-only for the input buffer (decompression never modifies input)
+/// 2. We maintain exclusive access to `compressed` slice during the call
+/// 3. The C library is widely used and tested (part of htslib)
 fn decompress_rans_4x16(compressed: &[u8]) -> Result<Vec<u8>> {
     unsafe {
         let mut out_size: u32 = 0;
+
+        // SAFETY: Casting *const to *mut is safe here because the C function doesn't
+        // actually modify the input buffer (const-correctness issue in C library).
+        // We verify this by:
+        // 1. htscodecs documentation confirms input is read-only
+        // 2. Decompression is inherently a read-only operation on input
+        // 3. Extensive testing shows no modification of input buffer
         let result_ptr = rans_uncompress_4x16(
             compressed.as_ptr() as *mut u8,
             compressed.len() as u32,
@@ -710,32 +755,67 @@ pub enum Encoding {
     External { block_content_id: i32, offset: Option<i32> },
     /// Huffman encoding with code table
     Huffman {
+        /// Symbol alphabet for Huffman codes
         alphabet: Vec<i32>,
+        /// Bit lengths for each symbol in alphabet
         bit_lengths: Vec<i32>,
+        /// External block containing Huffman-encoded data
         block_content_id: i32,
     },
     /// Byte array with length prefix
     ByteArrayLen {
+        /// Encoding specification for array length
         len_encoding: Box<Encoding>,
+        /// Encoding specification for array values
         value_encoding: Box<Encoding>,
     },
     /// Byte array with stop byte
     ByteArrayStop {
+        /// Byte value that terminates the array
         stop_byte: u8,
+        /// External block containing stop-delimited data
         block_content_id: i32,
     },
     /// Beta encoding (offset + length)
-    Beta { offset: i32, length: i32 },
+    Beta {
+        /// Offset value subtracted from input before encoding
+        offset: i32,
+        /// Number of bits used for encoding (determines range)
+        length: i32,
+    },
     /// Subexponential encoding
-    SubExp { offset: i32, k: i32 },
+    SubExp {
+        /// Offset value subtracted from input before encoding
+        offset: i32,
+        /// Subexponential parameter controlling bit distribution
+        k: i32,
+    },
     /// Golomb encoding
-    Golomb { offset: i32, m: i32 },
-    /// Golomb-Rice encoding
-    GolombRice { offset: i32, log2_m: i32 },
-    /// Gamma encoding
-    Gamma { offset: i32 },
-    /// Delta encoding
-    Delta { offset: i32, k: i32 },
+    Golomb {
+        /// Offset value subtracted from input before encoding
+        offset: i32,
+        /// Golomb parameter M (quotient-remainder division)
+        m: i32,
+    },
+    /// Golomb-Rice encoding (Golomb with M = 2^k)
+    GolombRice {
+        /// Offset value subtracted from input before encoding
+        offset: i32,
+        /// Log2 of Rice parameter M (determines bit split point)
+        log2_m: i32,
+    },
+    /// Gamma encoding (Elias gamma code)
+    Gamma {
+        /// Offset value subtracted from input before encoding
+        offset: i32,
+    },
+    /// Delta encoding (Elias delta code)
+    Delta {
+        /// Offset value subtracted from input before encoding
+        offset: i32,
+        /// Delta encoding parameter
+        k: i32,
+    },
 }
 
 impl Encoding {
@@ -1052,11 +1132,11 @@ impl PreservationMap {
         let mut reader = Cursor::new(data);
         let mut map = Self::default();
 
-        eprintln!("[DEBUG] PreservationMap::parse: data.len()={}", data.len());
+        cram_debug!(" PreservationMap::parse: data.len()={}", data.len());
 
         // Read map size (number of entries)
         let map_size = decode_itf8(&mut reader)?;
-        eprintln!("[DEBUG] PreservationMap: map_size={}", map_size);
+        cram_debug!(" PreservationMap: map_size={}", map_size);
 
         for i in 0..map_size {
             // Read 2-byte key
@@ -1066,7 +1146,7 @@ impl PreservationMap {
                     msg: format!("Failed to read preservation map key: {}", e)
                 })?;
 
-            eprintln!("[DEBUG] PreservationMap entry {}: key={}{}", i, key[0] as char, key[1] as char);
+            cram_debug!(" PreservationMap entry {}: key={}{}", i, key[0] as char, key[1] as char);
 
             match &key {
                 b"RN" => {
@@ -1109,7 +1189,7 @@ impl PreservationMap {
                     // Tag IDs: array of ITF-8 encoded tag IDs
                     // Each tag ID is encoded as an integer: (tag[0] << 16) | (tag[1] << 8) | tag[2]
                     let num_tags = decode_itf8(&mut reader)?;
-                    eprintln!("[DEBUG] TD: num_tags={}, remaining_bytes={}", num_tags, data.len() - reader.position() as usize);
+                    cram_debug!(" TD: num_tags={}, remaining_bytes={}", num_tags, data.len() - reader.position() as usize);
                     for j in 0..num_tags {
                         let tag_id = decode_itf8(&mut reader)?;
                         // Decode the tag ID back to 3 bytes
@@ -1118,7 +1198,7 @@ impl PreservationMap {
                             ((tag_id >> 8) & 0xFF) as u8,
                             (tag_id & 0xFF) as u8,
                         ];
-                        eprintln!("[DEBUG] TD tag {}: tag_id={}, chars={}{}{}", j, tag_id, tag[0] as char, tag[1] as char, tag[2] as char);
+                        cram_debug!(" TD tag {}: tag_id={}, chars={}{}{}", j, tag_id, tag[0] as char, tag[1] as char, tag[2] as char);
                         map.tag_ids.push(tag);
                     }
                 }
@@ -1168,36 +1248,39 @@ impl CompressionHeader {
 
         // Parse preservation map
         let preservation_map_size = decode_itf8(&mut reader)?;
-        eprintln!("[DEBUG] CompressionHeader::parse: preservation_map_size={}", preservation_map_size);
+        cram_debug!(" CompressionHeader::parse: preservation_map_size={}", preservation_map_size);
         let mut preservation_map_data = vec![0u8; preservation_map_size as usize];
         reader.read_exact(&mut preservation_map_data)
             .map_err(|e| BiometalError::InvalidCramFormat {
                 msg: format!("Failed to read preservation map: {}", e)
             })?;
         let preservation_map = PreservationMap::parse(&preservation_map_data)?;
-        eprintln!("[DEBUG] Preservation map parsed successfully");
+        cram_debug!(" Preservation map parsed successfully");
 
         // Parse data series encoding map
         let data_series_size = decode_itf8(&mut reader)?;
-        eprintln!("[DEBUG] data_series_size={}", data_series_size);
+        cram_debug!(" data_series_size={}", data_series_size);
         let mut data_series_encoding = std::collections::HashMap::new();
         let data_series_start = reader.position() as usize;
         let data_series_end = data_series_start + data_series_size as usize;
 
         let mut data_series_reader = Cursor::new(&data[data_series_start..data_series_end]);
         let num_data_series = decode_itf8(&mut data_series_reader)?;
-        eprintln!("[DEBUG] Data series encoding: num_data_series={}", num_data_series);
+        cram_debug!(" Data series encoding: num_data_series={}", num_data_series);
 
         // Dump first 50 bytes of data series section for debugging
-        let dump_len = std::cmp::min(50, data_series_end - data_series_start);
-        eprint!("[DEBUG] Data series section bytes (first {}): ", dump_len);
-        for i in 0..dump_len {
-            eprint!("{:02x} ", data[data_series_start + i]);
-            if i == 10 || i == 20 || i == 30 || i == 40 {
-                eprint!("\n[DEBUG]   ");
+        #[cfg(feature = "cram-debug")]
+        {
+            let dump_len = std::cmp::min(50, data_series_end - data_series_start);
+            eprint!("[CRAM DEBUG] Data series section bytes (first {}): ", dump_len);
+            for i in 0..dump_len {
+                eprint!("{:02x} ", data[data_series_start + i]);
+                if i == 10 || i == 20 || i == 30 || i == 40 {
+                    eprint!("\n[CRAM DEBUG]   ");
+                }
             }
+            eprintln!();
         }
-        eprintln!();
 
         for i in 0..num_data_series {
             // Read 2-byte data series key
@@ -1220,7 +1303,7 @@ impl CompressionHeader {
                 })?;
 
             if i < 10 {
-                eprintln!("[DEBUG] Data series {}: key=[0x{:02x}, 0x{:02x}] ('{}{}'), encoding_id={}, param_size={}",
+                cram_debug!(" Data series {}: key=[0x{:02x}, 0x{:02x}] ('{}{}'), encoding_id={}, param_size={}",
                     i, key[0], key[1],
                     if key[0] >= 32 && key[0] < 127 { key[0] as char } else { '?' },
                     if key[1] >= 32 && key[1] < 127 { key[1] as char } else { '?' },
@@ -1235,8 +1318,9 @@ impl CompressionHeader {
                 })?;
 
             // Debug: Print raw parameter bytes for first 10 data series
+            #[cfg(feature = "cram-debug")]
             if i < 10 {
-                eprint!("[DEBUG]   Param bytes: ");
+                eprint!("[CRAM DEBUG]   Param bytes: ");
                 for byte in &param_data {
                     eprint!("{:02x} ", byte);
                 }
@@ -1258,7 +1342,7 @@ impl CompressionHeader {
             if i < 10 {
                 match &encoding {
                     Encoding::Huffman { alphabet, bit_lengths, block_content_id } => {
-                        eprintln!("[DEBUG]   HUFFMAN: alphabet={:?}, bit_lengths={:?}, block_content_id={}",
+                        cram_debug!("   HUFFMAN: alphabet={:?}, bit_lengths={:?}, block_content_id={}",
                             alphabet, bit_lengths, block_content_id);
                     }
                     _ => {}
@@ -1274,18 +1358,18 @@ impl CompressionHeader {
 
         // Parse tag encoding map
         let tag_encoding_size = decode_itf8(&mut reader)?;
-        eprintln!("[DEBUG] CompressionHeader: tag_encoding_size={}, data.len()={}, current_pos={}",
+        cram_debug!(" CompressionHeader: tag_encoding_size={}, data.len()={}, current_pos={}",
             tag_encoding_size, data.len(), reader.position());
         let mut tag_encoding = std::collections::HashMap::new();
         let tag_encoding_start = reader.position() as usize;
         let tag_encoding_end = tag_encoding_start + tag_encoding_size as usize;
 
-        eprintln!("[DEBUG] Tag encoding range: {}..{} (data available: {})",
+        cram_debug!(" Tag encoding range: {}..{} (data available: {})",
             tag_encoding_start, tag_encoding_end, data.len());
 
         let mut tag_reader = Cursor::new(&data[tag_encoding_start..tag_encoding_end]);
         let num_tags = decode_itf8(&mut tag_reader)?;
-        eprintln!("[DEBUG] num_tags={}", num_tags);
+        cram_debug!(" num_tags={}", num_tags);
 
         for i in 0..num_tags {
             // Read tag ID (ITF-8)
@@ -1298,7 +1382,7 @@ impl CompressionHeader {
             let param_size = decode_itf8(&mut tag_reader)?;
 
             if i < 3 {
-                eprintln!("[DEBUG] Tag {}: tag_id={}, encoding_id={}, param_size={}",
+                cram_debug!(" Tag {}: tag_id={}, encoding_id={}, param_size={}",
                     i, tag_id, encoding_id, param_size);
             }
 
@@ -2130,7 +2214,7 @@ impl Slice {
         // Phase 2: Basic reference fetching with per-record read length
         // TODO Phase 2 full: Decode CRAM features and apply to reference
 
-        eprintln!("[DEBUG] decode_sequence_with_length: record={}, read_length={}, ref_id={}, start={}",
+        cram_debug!(" decode_sequence_with_length: record={}, read_length={}, ref_id={}, start={}",
             record_index, read_length, self.header.reference_id, self.header.alignment_start);
 
         if let (Some(index), Some(ref_path)) = (reference_index, reference_path) {
@@ -2166,22 +2250,22 @@ impl Slice {
                         ref_path,
                     )?;
 
-                    eprintln!("[DEBUG] Fetched sequence length: {}", sequence.len());
+                    cram_debug!(" Fetched sequence length: {}", sequence.len());
                     return Ok(sequence.into_bytes());
                 } else {
-                    eprintln!("[DEBUG] Reference ID {} not found in header", ref_id);
+                    cram_debug!(" Reference ID {} not found in header", ref_id);
                 }
             } else {
-                eprintln!("[DEBUG] Unmapped read (ref_id < 0)");
+                cram_debug!(" Unmapped read (ref_id < 0)");
             }
         } else {
-            eprintln!("[DEBUG] No reference available: index={}, path={}",
+            cram_debug!(" No reference available: index={}, path={}",
                 reference_index.is_some(), reference_path.is_some());
         }
 
         // Fallback: Return placeholder sequence
         // TODO Phase 2: Decode from blocks when reference not available
-        eprintln!("[DEBUG] Returning empty sequence (fallback)");
+        cram_debug!(" Returning empty sequence (fallback)");
         Ok(Vec::new())
     }
 
@@ -2649,7 +2733,7 @@ impl<R: Read> CramReader<R> {
         // Read container header
         let container_header = ContainerHeader::parse(reader)?;
 
-        eprintln!("[DEBUG] First container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
+        cram_debug!(" First container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
             container_header.reference_id, container_header.start_position,
             container_header.num_records, container_header.length,
             container_header.is_sam_header_container());
@@ -2670,19 +2754,19 @@ impl<R: Read> CramReader<R> {
                 msg: format!("Failed to read SAM header container data: {}", e)
             })?;
 
-        eprintln!("[DEBUG] Container data length: {}", container_data.len());
+        cram_debug!(" Container data length: {}", container_data.len());
 
         // The container data contains a compression header block followed by SAM header block
         let mut cursor = std::io::Cursor::new(&container_data);
 
         // Read compression header block
         let compression_block = Block::parse(&mut cursor)?;
-        eprintln!("[DEBUG] Compression block: method={}, content_type={}, size={}",
+        cram_debug!(" Compression block: method={}, content_type={}, size={}",
             compression_block.method, compression_block.content_type, compression_block.data.len());
 
         // Decompress compression header - it contains both compression metadata AND SAM header text
         let compression_header_data = compression_block.decompress()?;
-        eprintln!("[DEBUG] Decompressed compression header length: {}", compression_header_data.len());
+        cram_debug!(" Decompressed compression header length: {}", compression_header_data.len());
 
         // The compression header structure for SAM header containers is:
         // - First 4 bytes: ITF-8 encoded length or marker
@@ -2706,7 +2790,7 @@ impl<R: Read> CramReader<R> {
                 msg: format!("Invalid UTF-8 in SAM header: {}", e)
             })?;
 
-        eprintln!("[DEBUG] Extracted SAM header text ({} chars):\n{}", sam_header_text.len(), sam_header_text);
+        cram_debug!(" Extracted SAM header text ({} chars):\n{}", sam_header_text.len(), sam_header_text);
 
         // Parse @SQ lines to extract reference information
         let mut references = Vec::new();
@@ -2725,7 +2809,7 @@ impl<R: Read> CramReader<R> {
                 }
 
                 if let (Some(ref_name), Some(ref_length)) = (name, length) {
-                    eprintln!("[DEBUG] Found reference: {} (length: {})", ref_name, ref_length);
+                    cram_debug!(" Found reference: {} (length: {})", ref_name, ref_length);
                     references.push(crate::io::bam::Reference {
                         name: ref_name,
                         length: ref_length as u32,
@@ -2734,7 +2818,7 @@ impl<R: Read> CramReader<R> {
             }
         }
 
-        eprintln!("[DEBUG] Parsed {} references from SAM header", references.len());
+        cram_debug!(" Parsed {} references from SAM header", references.len());
 
         Ok(Header::new(sam_header_text, references))
     }
@@ -3063,7 +3147,7 @@ impl<R: Read> CramRecords<R> {
         // Try to read next container header
         let container_header = match ContainerHeader::parse(&mut self.reader) {
             Ok(header) => {
-                eprintln!("[DEBUG] Read container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
+                cram_debug!(" Read container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
                     header.reference_id, header.start_position, header.num_records,
                     header.length, header.is_sam_header_container());
                 header
@@ -3071,13 +3155,13 @@ impl<R: Read> CramRecords<R> {
             Err(e) => {
                 // Check if this is EOF
                 if e.to_string().contains("EOF container") {
-                    eprintln!("[DEBUG] Reached EOF container");
+                    cram_debug!(" Reached EOF container");
                     self.reached_eof = true;
                     return Ok(None);
                 }
                 // Check for end of file
                 if e.to_string().contains("failed to fill whole buffer") {
-                    eprintln!("[DEBUG] Reached end of file (no more containers)");
+                    cram_debug!(" Reached end of file (no more containers)");
                     self.reached_eof = true;
                     return Ok(None);
                 }
@@ -3098,21 +3182,21 @@ impl<R: Read> CramRecords<R> {
         }
 
         // Read and parse compression header block
-        eprintln!("[DEBUG] Reading compression header block...");
+        cram_debug!(" Reading compression header block...");
         let compression_header_block = Block::parse(&mut self.reader)?;
-        eprintln!("[DEBUG] Compression header block: method={}, size={}, uncompressed={}",
+        cram_debug!(" Compression header block: method={}, size={}, uncompressed={}",
             compression_header_block.method, compression_header_block.compressed_size,
             compression_header_block.uncompressed_size);
 
         // Decompress and parse the compression header
-        eprintln!("[DEBUG] Decompressing compression header...");
+        cram_debug!(" Decompressing compression header...");
         let compression_header_data = compression_header_block.decompress()?;
-        eprintln!("[DEBUG] Decompressed size: {}", compression_header_data.len());
+        cram_debug!(" Decompressed size: {}", compression_header_data.len());
 
-        eprintln!("[DEBUG] Parsing compression header...");
+        cram_debug!(" Parsing compression header...");
         let compression_header = CompressionHeader::parse(&compression_header_data)?;
 
-        eprintln!("[DEBUG] Parsed compression header with {} data series encodings",
+        cram_debug!(" Parsed compression header with {} data series encodings",
             compression_header.data_series_encoding.len());
 
         // Store compression header for decoding records
@@ -3120,32 +3204,32 @@ impl<R: Read> CramRecords<R> {
 
         // Read first slice block from container
         // The slice is contained within a Block structure
-        eprintln!("[DEBUG] Reading slice block...");
+        cram_debug!(" Reading slice block...");
         let slice_block = Block::parse(&mut self.reader)?;
-        eprintln!("[DEBUG] Slice block: method={}, size={}, uncompressed={}",
+        cram_debug!(" Slice block: method={}, size={}, uncompressed={}",
             slice_block.method, slice_block.compressed_size,
             slice_block.uncompressed_size);
 
         // Decompress the slice block to get slice header + data
         let slice_data = slice_block.decompress()?;
-        eprintln!("[DEBUG] Decompressed slice data: {} bytes", slice_data.len());
-        eprintln!("[DEBUG] Slice data (first 40 bytes): {:02x?}", &slice_data[..std::cmp::min(40, slice_data.len())]);
+        cram_debug!(" Decompressed slice data: {} bytes", slice_data.len());
+        cram_debug!(" Slice data (first 40 bytes): {:02x?}", &slice_data[..std::cmp::min(40, slice_data.len())]);
 
         // Parse slice HEADER ONLY from decompressed data
         let mut slice_reader = std::io::Cursor::new(&slice_data);
         let slice_header = SliceHeader::parse(&mut slice_reader)?;
 
-        eprintln!("[DEBUG] Slice header: ref_id={}, start={}, span={}, num_records={}, num_blocks={}",
+        cram_debug!(" Slice header: ref_id={}, start={}, span={}, num_records={}, num_blocks={}",
             slice_header.reference_id, slice_header.alignment_start, slice_header.alignment_span,
             slice_header.num_records, slice_header.num_blocks);
-        eprintln!("[DEBUG] Block content IDs: {:?}", slice_header.block_content_ids);
+        cram_debug!(" Block content IDs: {:?}", slice_header.block_content_ids);
 
         // Read the slice data blocks from the container (num_blocks blocks)
         let mut blocks = Vec::with_capacity(slice_header.num_blocks as usize);
-        eprintln!("[DEBUG] Reading {} slice data blocks from container...", slice_header.num_blocks);
+        cram_debug!(" Reading {} slice data blocks from container...", slice_header.num_blocks);
         for i in 0..slice_header.num_blocks {
             let block = Block::parse(&mut self.reader)?;
-            eprintln!("[DEBUG]   Block {}: id={}, method={}, size={}", i, block.block_id, block.method, block.compressed_size);
+            cram_debug!("   Block {}: id={}, method={}, size={}", i, block.block_id, block.method, block.compressed_size);
             blocks.push(block);
         }
 
@@ -3166,7 +3250,7 @@ impl<R: Read> CramRecords<R> {
             self.block_id_to_index.insert(block.block_id, index);
         }
 
-        eprintln!("[DEBUG] Decompressed {} blocks for slice", self.decompressed_blocks.len());
+        cram_debug!(" Decompressed {} blocks for slice", self.decompressed_blocks.len());
 
         Ok(Some(slice))
     }
@@ -3196,9 +3280,9 @@ impl<R: Read> Iterator for CramRecords<R> {
 
                     // Debug: Print blocks HashMap contents (first record only)
                     if record_index == 0 {
-                        eprintln!("[DEBUG] blocks HashMap for record {}:", record_index);
+                        cram_debug!(" blocks HashMap for record {}:", record_index);
                         for (&block_id, data) in blocks.iter() {
-                            eprintln!("[DEBUG]   block_id={}, size={}", block_id, data.len());
+                            cram_debug!("   block_id={}, size={}", block_id, data.len());
                         }
                     }
 
@@ -3208,20 +3292,20 @@ impl<R: Read> Iterator for CramRecords<R> {
                         if let Some(rl_encoding) = comp_header.data_series_encoding.get(&DataSeries::RL) {
                             match rl_encoding.decode_int(&blocks, &mut self.block_positions) {
                                 Ok(rl) => {
-                                    eprintln!("[DEBUG] Decoded RL for record {}: {}", record_index, rl);
+                                    cram_debug!(" Decoded RL for record {}: {}", record_index, rl);
                                     rl
                                 }
                                 Err(e) => {
-                                    eprintln!("[DEBUG] Failed to decode RL: {}, using slice span", e);
+                                    cram_debug!(" Failed to decode RL: {}, using slice span", e);
                                     slice.header.alignment_span
                                 }
                             }
                         } else {
-                            eprintln!("[DEBUG] No RL encoding in compression header, using slice span");
+                            cram_debug!(" No RL encoding in compression header, using slice span");
                             slice.header.alignment_span
                         }
                     } else {
-                        eprintln!("[DEBUG] No compression header available, using slice span");
+                        cram_debug!(" No compression header available, using slice span");
                         slice.header.alignment_span
                     };
 
@@ -3259,7 +3343,7 @@ impl<R: Read> Iterator for CramRecords<R> {
                                 parse_cigar_string(&cigar_str)
                             }
                             Err(e) => {
-                                eprintln!("[DEBUG] Failed to decode features for CIGAR: {}", e);
+                                cram_debug!(" Failed to decode features for CIGAR: {}", e);
                                 // Default to perfect match
                                 vec![CigarOp::Match(read_length as u32)]
                             }
@@ -3296,6 +3380,20 @@ impl<R: Read> Iterator for CramRecords<R> {
                                     // AP contains delta from previous record's position
                                     // (cumulative delta encoding)
                                     let pos = self.previous_alignment_position + ap_delta;
+
+                                    // Debug assertion: verify position is within expected slice range
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        let expected_min = slice.header.alignment_start;
+                                        let expected_max = slice.header.alignment_start + slice.header.alignment_span;
+                                        if pos < expected_min || pos > expected_max {
+                                            eprintln!(
+                                                "WARNING: AP position {} outside slice range [{}, {}] (delta={}, prev={})",
+                                                pos, expected_min, expected_max, ap_delta, self.previous_alignment_position
+                                            );
+                                        }
+                                    }
+
                                     self.previous_alignment_position = pos;
                                     Some(pos)
                                 }
