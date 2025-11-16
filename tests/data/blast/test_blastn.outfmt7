@@ -1,0 +1,11 @@
+# BLASTN 2.15.0+
+# Query: Test sequences
+# Database: nt
+# Fields: query id, subject id, % identity, alignment length, mismatches, gap opens, q. start, q. end, s. start, s. end, evalue, bit score
+# 5 hits found
+Query_1	gi|123456|ref|NC_000001.1|	100.00	100	0	0	1	100	50000	50099	1e-50	200
+Query_1	gi|789012|ref|NC_000002.1|	95.00	100	5	0	1	100	75000	75099	2e-40	180
+Query_2	gi|123456|ref|NC_000001.1|	98.50	200	3	0	1	200	100000	100199	1e-95	350
+Query_2	gi|345678|ref|NC_000003.1|	85.00	150	22	1	25	174	200000	200149	3e-30	140
+Query_3	gi|789012|ref|NC_000002.1|	92.30	65	5	0	1	65	150000	150064	5e-20	95.5
+# BLAST processed 3 queries

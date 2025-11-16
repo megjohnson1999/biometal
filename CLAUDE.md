@@ -124,7 +124,7 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
   - ARM NEON optimizations (9× base counting, ~10% overall parsing improvement)
 - **Python bindings** (PyO3 0.27, 100+ functions, **complete format coverage**)
   - **READ + WRITE**: FASTQ, FASTA, BAM, SAM, BED (3/6/12 + narrowPeak), GFA, VCF, GFF3, GTF, PAF
-  - **READ only**: CRAM, GenBank
+  - **READ only**: CRAM, GenBank, BLAST tabular
   - CIGAR operations, BAM/SAM headers, tags
   - Index support (BAI, CSI, FAI, TBI) with region queries
   - Statistics functions (coverage, insert size, MAPQ, edit distance, strand bias)
@@ -139,6 +139,7 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
   - **GTF (Gene Transfer Format)**: RNA-seq gene annotations (v1.10.0)
   - **PAF (Pairwise mApping Format)**: minimap2 long-read alignments (v1.10.0)
   - **GenBank (NCBI sequence database)**: Annotated sequences with features (Nov 16, 2025)
+  - **BLAST tabular (BLAST outfmt 6/7)**: Sequence alignment results (Nov 16, 2025)
   - **Python optimizations**: 50-60% memory reduction per record (v1.10.0)
   - **Property-based testing**: 23 tests validating format invariants
   - **Real-world validation**: 6 integration tests with ENCODE, UCSC, Ensembl, 1000 Genomes
@@ -546,6 +547,7 @@ m.add_class::<PyFastaWriter>()?;
 **READ only** (Rust + Python):
 - ✅ CRAM (v1.12.0) - Production-ready decoder, ARM NEON optimized
 - ✅ GenBank (Nov 16, 2025) - NCBI sequence database with feature annotations
+- ✅ BLAST tabular (Nov 16, 2025) - BLAST outfmt 6/7 alignment results
 
 **Index support** (READ only):
 - ✅ BAI, CSI (BAM/CRAM indices) (v1.6.0)

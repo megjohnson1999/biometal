@@ -16,6 +16,7 @@ mod masking;
 mod bam;
 mod cram;
 mod bed;
+mod blast;
 mod gfa;
 mod vcf;
 mod gff;
@@ -37,6 +38,7 @@ pub use masking::*;
 pub use bam::*;
 pub use cram::*;
 pub use bed::*;
+pub use blast::*;
 pub use gfa::*;
 pub use vcf::*;
 pub use gff::*;
@@ -132,6 +134,10 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPafRecord>()?;
     m.add_class::<PyPafStream>()?;
     m.add_class::<PyPafWriter>()?;
+
+    // Register BLAST tabular format types
+    m.add_class::<PyBlastRecord>()?;
+    m.add_class::<PyBlastTabularParser>()?;
 
     // Register GenBank format types
     m.add_class::<PyGenBankFeature>()?;
