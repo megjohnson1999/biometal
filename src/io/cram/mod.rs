@@ -120,7 +120,7 @@
 //!
 //! **Target**: Fastest ARM-native CRAM reader (vs samtools, htslib)
 
-use crate::io::bam::{Header, Record, Tags};
+use crate::io::bam::{CigarOp, Header, Record, Tags};
 use crate::io::fasta::FaiIndex;
 use crate::{BiometalError, Result};
 use std::io::{self, BufReader, Read};
@@ -196,6 +196,43 @@ fn decompress_name_tokenizer(compressed: &[u8]) -> Result<Vec<u8>> {
 
         Ok(decompressed)
     }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Parse a CIGAR string (e.g., "100M", "50M2I48M") into Vec<CigarOp>.
+fn parse_cigar_string(cigar_str: &str) -> Vec<CigarOp> {
+    let mut cigar_ops = Vec::new();
+    let mut current_count = String::new();
+
+    for ch in cigar_str.chars() {
+        if ch.is_ascii_digit() {
+            current_count.push(ch);
+        } else {
+            // Parse the count
+            let count: u32 = current_count.parse().unwrap_or(0);
+            current_count.clear();
+
+            // Convert operation character to CigarOp
+            let op = match ch {
+                'M' => CigarOp::Match(count),
+                'I' => CigarOp::Insertion(count),
+                'D' => CigarOp::Deletion(count),
+                'N' => CigarOp::RefSkip(count),
+                'S' => CigarOp::SoftClip(count),
+                'H' => CigarOp::HardClip(count),
+                'P' => CigarOp::Padding(count),
+                '=' => CigarOp::SeqMatch(count),
+                'X' => CigarOp::SeqMismatch(count),
+                _ => continue, // Skip unknown operations
+            };
+            cigar_ops.push(op);
+        }
+    }
+
+    cigar_ops
 }
 
 // ============================================================================
@@ -675,6 +712,7 @@ pub enum Encoding {
     Huffman {
         alphabet: Vec<i32>,
         bit_lengths: Vec<i32>,
+        block_content_id: i32,
     },
     /// Byte array with length prefix
     ByteArrayLen {
@@ -732,7 +770,7 @@ impl Encoding {
                 Ok(Self::Golomb { offset, m })
             }
             3 => {
-                // HUFFMAN: ITF-8 alphabet_size, ITF-8[] alphabet, ITF-8[] bit_lengths
+                // HUFFMAN: ITF-8 alphabet_size, ITF-8[] alphabet, ITF-8[] bit_lengths, ITF-8 block_content_id
                 let alphabet_size = decode_itf8(reader)?;
                 let mut alphabet = Vec::with_capacity(alphabet_size as usize);
                 for _ in 0..alphabet_size {
@@ -742,9 +780,12 @@ impl Encoding {
                 for _ in 0..alphabet_size {
                     bit_lengths.push(decode_itf8(reader)?);
                 }
+                // Read block_content_id (which block to read the huffman-coded data from)
+                let block_content_id = decode_itf8(reader)?;
                 Ok(Self::Huffman {
                     alphabet,
                     bit_lengths,
+                    block_content_id,
                 })
             }
             4 => {
@@ -853,12 +894,11 @@ impl Encoding {
 
                 Ok(value)
             }
-            Self::Huffman { alphabet, bit_lengths } => {
-                // HUFFMAN encoding reads from core block (block 0)
-                let block_content_id = 0;
-                let block_data = blocks.get(&block_content_id)
+            Self::Huffman { alphabet, bit_lengths, block_content_id } => {
+                // HUFFMAN encoding reads from specified block
+                let block_data = blocks.get(block_content_id)
                     .ok_or_else(|| BiometalError::InvalidCramFormat {
-                        msg: "Core block (block 0) not found for HUFFMAN decoding".to_string()
+                        msg: format!("Block {} not found for HUFFMAN decoding", block_content_id)
                     })?;
 
                 // Build Huffman tree/lookup
@@ -868,18 +908,26 @@ impl Encoding {
                     let symbol = alphabet[0];
                     let bits = bit_lengths[0];
 
-                    // Still need to consume the bits from the stream
-                    let pos = block_positions.get(&block_content_id).copied().unwrap_or(0);
-                    let mut bit_reader = BitReader::new(&block_data[pos..]);
+                    // For single-symbol alphabets, CRAM spec allows 0-bit encoding
+                    // (since there's no choice to encode). If bits == 0 or block is empty,
+                    // just return the symbol without reading.
+                    if bits == 0 || block_data.is_empty() {
+                        // No bits to consume (deterministic symbol)
+                        Ok(symbol)
+                    } else {
+                        // Need to consume bits from the stream
+                        let pos = block_positions.get(block_content_id).copied().unwrap_or(0);
+                        let mut bit_reader = BitReader::new(&block_data[pos..]);
 
-                    // Read and discard the bits (we know the result)
-                    bit_reader.read_bits(bits as u8)?;
+                        // Read and discard the bits (we know the result)
+                        bit_reader.read_bits(bits as u8)?;
 
-                    // Update byte position
-                    let new_pos = pos + bit_reader.byte_position();
-                    block_positions.insert(block_content_id, new_pos);
+                        // Update byte position
+                        let new_pos = pos + bit_reader.byte_position();
+                        block_positions.insert(*block_content_id, new_pos);
 
-                    Ok(symbol)
+                        Ok(symbol)
+                    }
                 } else {
                     // TODO: Implement full Huffman decoding for multi-symbol alphabets
                     Err(BiometalError::InvalidCramFormat {
@@ -1186,6 +1234,15 @@ impl CompressionHeader {
                     msg: format!("Failed to read encoding parameters for DS {}: {}", i, e)
                 })?;
 
+            // Debug: Print raw parameter bytes for first 10 data series
+            if i < 10 {
+                eprint!("[DEBUG]   Param bytes: ");
+                for byte in &param_data {
+                    eprint!("{:02x} ", byte);
+                }
+                eprintln!();
+            }
+
             // Parse encoding from the parameter data
             let mut param_reader = std::io::Cursor::new(&param_data);
             let encoding = Encoding::parse_with_id(encoding_id as u8, &mut param_reader)
@@ -1196,6 +1253,17 @@ impl CompressionHeader {
                         if key[1] >= 32 && key[1] < 127 { key[1] as char } else { '?' },
                         encoding_id, param_size, e)
                 })?;
+
+            // Debug: Print encoding details for HUFFMAN
+            if i < 10 {
+                match &encoding {
+                    Encoding::Huffman { alphabet, bit_lengths, block_content_id } => {
+                        eprintln!("[DEBUG]   HUFFMAN: alphabet={:?}, bit_lengths={:?}, block_content_id={}",
+                            alphabet, bit_lengths, block_content_id);
+                    }
+                    _ => {}
+                }
+            }
 
             data_series_encoding.insert(DataSeries::from_bytes(key), encoding);
         }
@@ -2071,19 +2139,30 @@ impl Slice {
                 let ref_id = self.header.reference_id as usize;
 
                 if let Some(ref_info) = header_references.get(ref_id) {
-                    // Use alignment start from slice + record offset
-                    // For now, using slice start; TODO: decode AP (alignment position) for exact start
-                    let start = (self.header.alignment_start + record_index as i32) as u64;
-                    let end = start + read_length as u64;
+                    // Convert from CRAM 1-based positions to 0-based array indices
+                    // CRAM alignment_start is 1-based, fetch_region expects 0-based
+                    let start_0based = ((self.header.alignment_start - 1) + record_index as i32) as u64;
+                    let end_0based = start_0based + read_length as u64;
 
-                    eprintln!("[DEBUG] Fetching reference: chr={}, start={}, end={} (length={})",
-                        ref_info.name, start, end, read_length);
+                    // Get actual reference length from FASTA index (not CRAM header)
+                    // CRAM header may have full chromosome length but we may be using a truncated reference
+                    let actual_ref_length = index.sequences.get(&ref_info.name)
+                        .map(|entry| entry.length)
+                        .unwrap_or(ref_info.length as u64);
 
-                    // Fetch reference subsequence
+                    // Check if read starts beyond reference end (boundary case)
+                    // This can happen when reads align to the very end of a chromosome
+                    // or when using a truncated reference file for testing
+                    if start_0based >= actual_ref_length {
+                        // Return empty sequence for reads beyond reference
+                        return Ok(Vec::new());
+                    }
+
+                    // Fetch reference subsequence (fetch_region will handle end clamping)
                     let sequence = index.fetch_region(
                         &ref_info.name,
-                        start,
-                        end,
+                        start_0based,
+                        end_0based,
                         ref_path,
                     )?;
 
@@ -2864,11 +2943,26 @@ impl<R: Read> CramReader<R> {
                 msg: format!("Reference ID {} not found in header", reference_id)
             })?;
 
-        // Fetch sequence from FASTA
+        // Convert from CRAM 1-based positions to 0-based indices
+        // CRAM uses 1-based coordinates, fetch_region expects 0-based
+        let start_0based = (start - 1) as u64;
+        let end_0based = (end - 1) as u64;
+
+        // Get actual reference length from FASTA index (not CRAM header)
+        let actual_ref_length = index.sequences.get(&ref_name.name)
+            .map(|entry| entry.length)
+            .unwrap_or(ref_name.length as u64);
+
+        // Check if read starts beyond reference end (boundary case)
+        if start_0based >= actual_ref_length {
+            return Ok(Vec::new());
+        }
+
+        // Fetch sequence from FASTA (will handle end clamping)
         let sequence = index.fetch_region(
             &ref_name.name,
-            start as u64,
-            end as u64,
+            start_0based,
+            end_0based,
             ref_path,
         )?;
 
@@ -2915,6 +3009,7 @@ impl<R: Read> CramReader<R> {
             block_positions: std::collections::HashMap::new(),
             decompressed_blocks: Vec::new(),
             block_id_to_index: std::collections::HashMap::new(),
+            previous_alignment_position: 0,
         }
     }
 }
@@ -2952,6 +3047,8 @@ pub struct CramRecords<R: Read> {
     decompressed_blocks: Vec<Vec<u8>>,
     /// Block ID to decompressed data index mapping
     block_id_to_index: std::collections::HashMap<i32, usize>,
+    /// Previous alignment position for AP delta decoding
+    previous_alignment_position: i32,
 }
 
 impl<R: Read> CramRecords<R> {
@@ -3097,6 +3194,14 @@ impl<R: Read> Iterator for CramRecords<R> {
                         })
                         .collect();
 
+                    // Debug: Print blocks HashMap contents (first record only)
+                    if record_index == 0 {
+                        eprintln!("[DEBUG] blocks HashMap for record {}:", record_index);
+                        for (&block_id, data) in blocks.iter() {
+                            eprintln!("[DEBUG]   block_id={}, size={}", block_id, data.len());
+                        }
+                    }
+
                     // Decode read length (RL) for this record
                     let read_length = if let Some(ref comp_header) = self.current_compression_header {
                         // Get RL encoding from compression header
@@ -3135,14 +3240,85 @@ impl<R: Read> Iterator for CramRecords<R> {
                     // Phase 2: Decode quality scores (placeholder for now)
                     let quality = slice.decode_quality_scores_simple(record_index, sequence.len());
 
+                    // Phase 2: Decode CIGAR from features
+                    let cigar = if let Some(ref comp_header) = self.current_compression_header {
+                        // Decode features for this record
+                        match CramFeature::decode_features(
+                            comp_header,
+                            &blocks,
+                            &mut self.block_positions,
+                        ) {
+                            Ok(features) => {
+                                // Build CIGAR string from features
+                                let cigar_str = CramFeature::build_cigar(
+                                    &features,
+                                    read_length as usize,
+                                    read_length as usize,
+                                );
+                                // Parse CIGAR string into Vec<CigarOp>
+                                parse_cigar_string(&cigar_str)
+                            }
+                            Err(e) => {
+                                eprintln!("[DEBUG] Failed to decode features for CIGAR: {}", e);
+                                // Default to perfect match
+                                vec![CigarOp::Match(read_length as u32)]
+                            }
+                        }
+                    } else {
+                        // No compression header, default to perfect match
+                        vec![CigarOp::Match(read_length as u32)]
+                    };
+
+                    // Phase 3: Decode read name from RN data series
+                    let name = if let Some(ref comp_header) = self.current_compression_header {
+                        if let Some(rn_encoding) = comp_header.data_series_encoding.get(&DataSeries::RN) {
+                            match rn_encoding.decode_byte_array(&blocks, &mut self.block_positions) {
+                                Ok(name_bytes) => {
+                                    String::from_utf8(name_bytes)
+                                        .unwrap_or_else(|_| format!("read_{}", record_index))
+                                }
+                                Err(_) => {
+                                    format!("read_{}", record_index)
+                                }
+                            }
+                        } else {
+                            format!("read_{}", record_index)
+                        }
+                    } else {
+                        format!("read_{}", record_index)
+                    };
+
+                    // Phase 4: Decode alignment position from AP data series
+                    let position = if let Some(ref comp_header) = self.current_compression_header {
+                        if let Some(ap_encoding) = comp_header.data_series_encoding.get(&DataSeries::AP) {
+                            match ap_encoding.decode_int(&blocks, &mut self.block_positions) {
+                                Ok(ap_delta) => {
+                                    // AP contains delta from previous record's position
+                                    // (cumulative delta encoding)
+                                    let pos = self.previous_alignment_position + ap_delta;
+                                    self.previous_alignment_position = pos;
+                                    Some(pos)
+                                }
+                                Err(_) => {
+                                    // Fallback: use placeholder position
+                                    Some(slice.header.alignment_start + record_index as i32)
+                                }
+                            }
+                        } else {
+                            Some(slice.header.alignment_start + record_index as i32)
+                        }
+                    } else {
+                        Some(slice.header.alignment_start + record_index as i32)
+                    };
+
                     // Create Record with decoded data
                     let record = Record {
-                        name: format!("read_{}", record_index),
+                        name,
                         flags: 0,
                         reference_id: Some(slice.header.reference_id as usize),
-                        position: Some(slice.header.alignment_start + record_index as i32),
+                        position,
                         mapq: Some(60),
-                        cigar: Vec::new(),  // TODO Phase 2: Decode CIGAR from blocks
+                        cigar,
                         mate_reference_id: None,
                         mate_position: None,
                         template_length: 0,
@@ -3158,6 +3334,8 @@ impl<R: Read> Iterator for CramRecords<R> {
             // Current slice exhausted or no slice, read next
             match self.read_next_slice() {
                 Ok(Some(slice)) => {
+                    // Reset previous_alignment_position for new slice
+                    self.previous_alignment_position = slice.header.alignment_start;
                     self.current_slice = Some(slice);
                     self.current_slice_index = 0;
                     // Continue loop to return first record from new slice
