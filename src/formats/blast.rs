@@ -231,4 +231,51 @@ mod tests {
         assert_eq!(query_counts.get("Query_2"), Some(&2));
         assert_eq!(query_counts.get("Query_3"), Some(&1));
     }
+
+    #[test]
+    fn test_parse_real_world_ecoli_blast() {
+        // Test outfmt6 (no comments)
+        let parser = BlastTabularParser::from_path("tests/data/real_world/alignments/blastn_ecoli_sample.outfmt6")
+            .expect("Failed to open real E. coli BLAST file");
+
+        let records: Vec<_> = parser.filter_map(|r| r.ok()).collect();
+        assert_eq!(records.len(), 17, "Should have 17 BLAST hits");
+
+        // Check first record (16S rRNA perfect match)
+        let first = &records[0];
+        assert_eq!(first.qseqid, "Query_16S_rRNA");
+        assert_eq!(first.sseqid, "NR_102804.1");
+        assert_eq!(first.pident, 99.82);
+        assert_eq!(first.length, 564);
+        assert_eq!(first.evalue, 0.0);
+        assert_eq!(first.bitscore, 1037.0);
+
+        // Check perfect match (gyrB)
+        let perfect_match = records.iter().find(|r| r.pident == 100.0).expect("Should have perfect match");
+        assert_eq!(perfect_match.qseqid, "Query_gyrB");
+        assert_eq!(perfect_match.mismatch, 0);
+
+        // Check weak hit (high E-value)
+        let weak_hit = records.iter().filter(|r| r.evalue > 1.0).count();
+        assert_eq!(weak_hit, 1, "Should have 1 weak hit with E>1");
+
+        println!("✅ Successfully parsed real E. coli BLAST output: {} hits", records.len());
+    }
+
+    #[test]
+    fn test_parse_real_world_ecoli_blast_outfmt7() {
+        // Test outfmt7 (with comments)
+        let parser = BlastTabularParser::from_path("tests/data/real_world/alignments/blastn_ecoli_sample.outfmt7")
+            .expect("Failed to open real E. coli BLAST outfmt7 file");
+
+        let records: Vec<_> = parser.filter_map(|r| r.ok()).collect();
+        assert_eq!(records.len(), 17, "Should have 17 BLAST hits (comments skipped)");
+
+        // Verify same data as outfmt6
+        let first = &records[0];
+        assert_eq!(first.qseqid, "Query_16S_rRNA");
+        assert_eq!(first.pident, 99.82);
+
+        println!("✅ Successfully parsed real E. coli BLAST outfmt7: {} hits", records.len());
+    }
 }

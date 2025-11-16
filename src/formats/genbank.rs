@@ -494,4 +494,36 @@ mod tests {
             .expect("No gene qualifier");
         assert_eq!(gene_qual.1, "test_gene");
     }
+
+    #[test]
+    fn test_parse_real_world_puc19() {
+        let parser = GenBankParser::from_path("tests/data/real_world/sequence/pUC19_plasmid.gb")
+            .expect("Failed to open real pUC19 GenBank file");
+
+        let record = parser.into_iter().next()
+            .expect("No record found")
+            .expect("Failed to parse pUC19 record");
+
+        // Verify basic record fields
+        assert_eq!(record.locus, "SYNPUC19CV");
+        assert_eq!(record.length, 2686);
+        assert_eq!(record.molecule_type, "DNA");
+        assert_eq!(record.topology, "circular");
+        assert!(record.accession.starts_with("L09137"), "Accession should start with L09137, got: {}", record.accession);
+
+        // Verify organism
+        assert_eq!(record.organism, "Cloning vector pUC19c");
+
+        // Verify sequence was parsed
+        assert_eq!(record.sequence.len(), 2686);
+
+        // Verify features were parsed
+        assert!(!record.features.is_empty(), "pUC19 should have features");
+
+        // Note: REFERENCE parsing is not yet implemented, so references will be empty
+        // This is expected and doesn't affect the core functionality
+
+        println!("✅ Successfully parsed real pUC19 plasmid: {} bp, {} features",
+            record.length, record.features.len());
+    }
 }
