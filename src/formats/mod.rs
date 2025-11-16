@@ -58,6 +58,7 @@
 //!   - [`paf`]: PAF format parser (minimap2 alignments)
 
 pub mod bed;
+pub mod bed_writer;
 pub mod gfa;
 pub mod gff;
 pub mod gtf;
