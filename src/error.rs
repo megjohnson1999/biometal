@@ -44,6 +44,13 @@ pub enum BiometalError {
         msg: String,
     },
 
+    /// Invalid GenBank format
+    #[error("Invalid GenBank format: {msg}")]
+    InvalidGenBankFormat {
+        /// Error message
+        msg: String,
+    },
+
     /// Compression/decompression error
     #[error("Compression error: {0}")]
     Compression(String),

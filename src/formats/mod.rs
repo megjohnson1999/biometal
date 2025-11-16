@@ -2,6 +2,7 @@
 //!
 //! This module provides streaming-first parsers for common bioinformatics formats:
 //! - **BED**: Browser Extensible Data (genomic intervals)
+//! - **GenBank**: NCBI genetic sequence database (annotated sequences)
 //! - **GFA**: Graphical Fragment Assembly (assembly graphs, pangenomes)
 //! - **VCF**: Variant Call Format (genetic variants)
 //! - **GFF3**: General Feature Format (gene annotations)
@@ -51,6 +52,7 @@
 //!   - Generic parsers, field utilities, genomic types
 //! - Format-specific modules:
 //!   - [`bed`]: BED format parser (BED3, BED6, BED12, narrowPeak)
+//!   - [`genbank`]: GenBank format parser (NCBI sequence database)
 //!   - [`gfa`]: GFA format parser (assembly graphs, pangenomes)
 //!   - [`vcf`]: VCF format parser (genetic variants)
 //!   - [`gff`]: GFF3 format parser (gene annotations)
@@ -59,6 +61,7 @@
 
 pub mod bed;
 pub mod bed_writer;
+pub mod genbank;
 pub mod gfa;
 pub mod gff;
 pub mod gff_writer;

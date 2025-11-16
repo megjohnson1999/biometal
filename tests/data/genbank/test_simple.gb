@@ -1,0 +1,28 @@
+LOCUS       TEST01                   100 bp    DNA     linear   PLN 16-NOV-2025
+DEFINITION  Test sequence for GenBank parser validation.
+ACCESSION   TEST01
+VERSION     TEST01.1
+KEYWORDS    .
+SOURCE      Synthetic construct
+  ORGANISM  Synthetic construct
+            other sequences; artificial sequences.
+REFERENCE   1  (bases 1 to 100)
+  AUTHORS   Test,A.
+  TITLE     Direct Submission
+  JOURNAL   Unpublished
+FEATURES             Location/Qualifiers
+     source          1..100
+                     /organism="Synthetic construct"
+                     /mol_type="genomic DNA"
+     gene            10..90
+                     /gene="test_gene"
+     CDS             10..90
+                     /gene="test_gene"
+                     /codon_start=1
+                     /product="test protein"
+                     /protein_id="TEST01_P1"
+                     /translation="MKTAYIAKQRQISFVKSHFSRQDILDLW"
+ORIGIN
+        1 acgtacgtac atggaaaact gcatatatta gcaaaacaaa ggcaaatttc atttgtgaaa
+       61 tcccatttta gccgtcaaga tattctagat ctttggtagc
+//

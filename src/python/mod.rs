@@ -24,6 +24,7 @@ mod paf;
 mod fasta;
 mod tbi;
 mod csi;
+mod genbank;
 
 pub use records::*;
 pub use streams::*;
@@ -44,6 +45,7 @@ pub use paf::*;
 pub use fasta::*;
 pub use tbi::*;
 pub use csi::*;
+pub use genbank::*;
 
 /// biometal: ARM-native bioinformatics library
 ///
@@ -130,6 +132,12 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPafRecord>()?;
     m.add_class::<PyPafStream>()?;
     m.add_class::<PyPafWriter>()?;
+
+    // Register GenBank format types
+    m.add_class::<PyGenBankFeature>()?;
+    m.add_class::<PyGenBankReference>()?;
+    m.add_class::<PyGenBankRecord>()?;
+    m.add_class::<PyGenBankParser>()?;
 
     // Register FASTA index
     m.add_class::<PyFaiIndex>()?;
