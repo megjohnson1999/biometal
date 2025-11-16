@@ -115,6 +115,13 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
   - ARM NEON sequence decoding (+27.5% BAM parsing speedup)
   - SAM writing for downstream tools
   - Robustness features (oversized CIGAR, malformed record handling)
+- **CRAM reader** (v1.12.0, production-ready)
+  - Full CRAM 3.0/3.1 decoding (reference-based compression)
+  - Native ARM-optimized implementation (zero external dependencies except codecs)
+  - Multi-codec support (gzip, bzip2, lzma, rANS 4x16)
+  - Streaming architecture (constant ~5 MB memory)
+  - 46 CRAM tests passing, validated with 30K+ real-world records
+  - ARM NEON optimizations (9× base counting, ~10% overall parsing improvement)
 - **Python bindings** (PyO3 0.27, 100+ functions)
   - Full BAM/FASTQ/FASTA support
   - CIGAR operations, SAM writing
@@ -135,7 +142,9 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
   - **TBI (Tabix Index)**: O(log n) region queries on BGZF files (VCF, BED, GFF3)
   - 100-1000× speedup vs sequential scanning
   - Integration examples: 3 Rust + 1 Python notebook
-- **Tests**: 551+ passing (library tests, see CHANGELOG.md for breakdown)
+- **Tests**: 626 passing (100% pass rate)
+  - 400 library tests (includes 46 CRAM tests with NEON optimizations)
+  - See CHANGELOG.md for full breakdown
 
 ### Optimization Rules Implemented
 
@@ -450,6 +459,7 @@ m.add_class::<PyFastaWriter>()?;
 ### File Formats (READ Support)
 - ✅ FASTQ, FASTA (v1.0.0)
 - ✅ BAM, SAM (v1.4.0) - SAM writing supported
+- ✅ CRAM (v1.12.0) - Production-ready decoder, ARM NEON optimized
 - ✅ BAI index (v1.6.0)
 - ✅ FAI, TBI indices (v1.9.0)
 - ✅ BED (BED3/6/12 + narrowPeak) (v1.8.0, v1.10.0)
@@ -459,13 +469,14 @@ m.add_class::<PyFastaWriter>()?;
 - ✅ GTF (RNA-seq annotations) (v1.10.0)
 - ✅ PAF (minimap2 alignments) (v1.10.0)
 - ⏳ **WRITE Support**: In progress for FASTQ, FASTA, BED, GTF, VCF
-- ❌ CRAM, BCF (deferred - complex, lower priority)
+- ❌ BCF (deferred - lower priority)
 
 ### Tests
-- **551+ passing** (100% pass rate)
-  - See CHANGELOG.md v1.10.0 for breakdown
+- **626 passing** (100% pass rate)
+  - 400 library tests (includes 46 CRAM tests with NEON optimizations)
+  - See CHANGELOG.md for breakdown
   - Property-based tests (format invariants)
-  - Real-world integration tests (ENCODE, UCSC, Ensembl, 1000 Genomes)
+  - Real-world integration tests (ENCODE, UCSC, Ensembl, 1000 Genomes, CRAM validation)
 
 ---
 

@@ -51,6 +51,8 @@ struct SharedData {
 
 impl BcfRecord {
     /// Parse a BCF record from reader.
+    ///
+    /// Reads the complete BCF record including shared and individual data.
     pub fn parse<R: Read>(reader: &mut R, header: &BcfHeader) -> Result<Self> {
         // Read record size (u32 little-endian)
         let mut size_buf = [0u8; 4];
@@ -89,9 +91,10 @@ impl BcfRecord {
         let pos = i32::from_le_bytes([fixed[4], fixed[5], fixed[6], fixed[7]]);
         let rlen = i32::from_le_bytes([fixed[8], fixed[9], fixed[10], fixed[11]]);
         let qual = f32::from_le_bytes([fixed[12], fixed[13], fixed[14], fixed[15]]);
-        let n_allele_info = u16::from_le_bytes([fixed[16], fixed[17]]);
-        let n_allele = n_allele_info >> 0;  // Lower bits
-        let n_info = u16::from_le_bytes([fixed[18], fixed[19]]);
+        // n_allele (16 bits) and n_info (16 bits) packed into 32 bits
+        let n_allele_info = u32::from_le_bytes([fixed[16], fixed[17], fixed[18], fixed[19]]);
+        let n_info = (n_allele_info & 0xFFFF) as u16;  // Lower 16 bits
+        let n_allele = ((n_allele_info >> 16) & 0xFFFF) as u16;  // Upper 16 bits
         let n_fmt_sample = [fixed[20], fixed[21], fixed[22], fixed[23]];
         let n_fmt = n_fmt_sample[0];
         let n_sample = u32::from_le_bytes([n_fmt_sample[1], n_fmt_sample[2], n_fmt_sample[3], 0]);
@@ -106,16 +109,24 @@ impl BcfRecord {
         };
 
         // Read alleles (REF + ALT)
+        // BCF2 stores each allele as a separate typed value
         let mut alleles = Vec::new();
-        for _ in 0..n_allele {
-            let allele = TypedValue::read(&mut cursor)?;
-            if let TypedValue::String(s) = allele {
-                alleles.push(s);
-            } else {
-                return Err(BiometalError::InvalidInput {
-                    msg: "Expected string for allele".to_string(),
-                });
+        for _i in 0..n_allele {
+            let allele_value = TypedValue::read(&mut cursor)?;
+            match allele_value {
+                TypedValue::String(s) => alleles.push(s),
+                _ => {
+                    return Err(BiometalError::InvalidInput {
+                        msg: format!("Expected string for allele, got {:?}", allele_value),
+                    })
+                }
             }
+        }
+
+        if alleles.is_empty() {
+            return Err(BiometalError::InvalidInput {
+                msg: "No alleles found".to_string(),
+            });
         }
 
         let reference = alleles.get(0).cloned().ok_or_else(|| BiometalError::InvalidInput {
@@ -212,16 +223,35 @@ impl BcfRecord {
         Ok(samples)
     }
 
-    /// Get chromosome/contig name.
-    pub fn chrom(&self) -> String {
-        // Would need access to header to resolve contig name
-        // For now, return the index
-        format!("contig_{}", self.shared.chrom_id)
+    /// Get chromosome/contig name from header.
+    pub fn chrom<'a>(&self, header: &'a BcfHeader) -> &'a str {
+        header
+            .contigs()
+            .get(self.shared.chrom_id as usize)
+            .map(|s| s.as_str())
+            .unwrap_or(".")
+    }
+
+    /// Get chromosome ID (index).
+    pub fn chrom_id(&self) -> i32 {
+        self.shared.chrom_id
     }
 
     /// Get position (1-based, VCF format).
+    ///
+    /// BCF stores 0-based positions, this converts to 1-based.
     pub fn pos(&self) -> i32 {
         self.shared.pos + 1
+    }
+
+    /// Get position (0-based, BCF format).
+    pub fn pos_0based(&self) -> i32 {
+        self.shared.pos
+    }
+
+    /// Get reference sequence end position (0-based exclusive).
+    pub fn end_pos(&self) -> i32 {
+        self.shared.pos + self.shared.rlen
     }
 
     /// Get reference allele.
@@ -236,26 +266,62 @@ impl BcfRecord {
 
     /// Get quality score.
     pub fn qual(&self) -> Option<f32> {
-        if self.shared.qual.is_nan() {
+        if self.shared.qual.is_nan() || self.shared.qual.to_bits() == 0x7F800001 {
             None
         } else {
             Some(self.shared.qual)
         }
     }
 
-    /// Get ID.
+    /// Get variant ID.
     pub fn id(&self) -> Option<&str> {
         self.shared.id.as_deref()
     }
 
-    /// Get INFO field value by name.
-    pub fn info(&self, name: &str) -> Result<Option<&TypedValue>> {
-        Ok(self.shared.info.get(name))
+    /// Get FILTER status.
+    ///
+    /// Returns filter names from the header.
+    pub fn filter<'a>(&self, header: &'a BcfHeader) -> Vec<&'a str> {
+        self.shared
+            .filter
+            .iter()
+            .filter_map(|&idx| header.filter_name(idx))
+            .collect()
     }
 
-    /// Get genotype data for a sample.
+    /// Check if variant passed all filters.
+    pub fn is_pass(&self) -> bool {
+        self.shared.filter.len() == 1 && self.shared.filter[0] == 0
+    }
+
+    /// Get INFO field value by name.
+    pub fn info(&self, name: &str) -> Option<&TypedValue> {
+        self.shared.info.get(name)
+    }
+
+    /// Get all INFO fields.
+    pub fn info_fields(&self) -> &HashMap<String, TypedValue> {
+        &self.shared.info
+    }
+
+    /// Get genotype data for a sample by index.
     pub fn genotype(&self, sample_idx: usize) -> Option<&HashMap<String, TypedValue>> {
         self.individual.get(sample_idx)
+    }
+
+    /// Get FORMAT field value for a specific sample.
+    pub fn format(&self, sample_idx: usize, field: &str) -> Option<&TypedValue> {
+        self.individual.get(sample_idx)?.get(field)
+    }
+
+    /// Get number of samples in this record.
+    pub fn n_samples(&self) -> usize {
+        self.individual.len()
+    }
+
+    /// Get number of alternate alleles.
+    pub fn n_alleles(&self) -> usize {
+        self.shared.alternate.len() + 1 // +1 for reference
     }
 }
 

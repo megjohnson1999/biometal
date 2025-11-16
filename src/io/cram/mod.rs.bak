@@ -378,8 +378,7 @@ impl ContainerHeader {
                 msg: format!("Failed to read container CRC32: {}", e)
             })?;
         let _crc32 = u32::from_be_bytes(crc_buf);
-        // Note: CRC32 validation not implemented (optional CRAM feature)
-        // Most CRAM files from trusted pipelines don't require runtime validation
+        // TODO: Validate CRC32 when we have the full header data
 
         Ok(ContainerHeader {
             length,
@@ -484,7 +483,7 @@ impl Block {
                 msg: format!("Failed to read block CRC32: {}", e)
             })?;
         let _crc32 = u32::from_be_bytes(crc_buf);
-        // Note: CRC32 validation not implemented (optional feature for data integrity)
+        // TODO: Validate CRC32 when needed
 
         Ok(Block {
             method,
@@ -756,25 +755,18 @@ pub enum Encoding {
     External { block_content_id: i32, offset: Option<i32> },
     /// Huffman encoding with code table
     Huffman {
-        /// Symbol alphabet for Huffman codes
         alphabet: Vec<i32>,
-        /// Bit lengths for each symbol in alphabet
         bit_lengths: Vec<i32>,
-        /// External block containing Huffman-encoded data
         block_content_id: i32,
     },
     /// Byte array with length prefix
     ByteArrayLen {
-        /// Encoding specification for array length
         len_encoding: Box<Encoding>,
-        /// Encoding specification for array values
         value_encoding: Box<Encoding>,
     },
     /// Byte array with stop byte
     ByteArrayStop {
-        /// Byte value that terminates the array
         stop_byte: u8,
-        /// External block containing stop-delimited data
         block_content_id: i32,
     },
     /// Beta encoding (offset + length)
@@ -1010,9 +1002,7 @@ impl Encoding {
                         Ok(symbol)
                     }
                 } else {
-                    // Known limitation: Multi-symbol Huffman decoding not implemented
-                    // Single-symbol Huffman (alphabet size 1) is fully supported
-                    // Future work: Build Huffman tree for alphabet size > 1
+                    // TODO: Implement full Huffman decoding for multi-symbol alphabets
                     Err(BiometalError::InvalidCramFormat {
                         msg: format!("Multi-symbol HUFFMAN not yet implemented (alphabet size: {})", alphabet.len())
                     })
@@ -1135,11 +1125,11 @@ impl PreservationMap {
         let mut reader = Cursor::new(data);
         let mut map = Self::default();
 
-        cram_debug!(" PreservationMap::parse: data.len()={}", data.len());
+        eprintln!("[DEBUG] PreservationMap::parse: data.len()={}", data.len());
 
         // Read map size (number of entries)
         let map_size = decode_itf8(&mut reader)?;
-        cram_debug!(" PreservationMap: map_size={}", map_size);
+        eprintln!("[DEBUG] PreservationMap: map_size={}", map_size);
 
         for i in 0..map_size {
             // Read 2-byte key
@@ -1149,7 +1139,7 @@ impl PreservationMap {
                     msg: format!("Failed to read preservation map key: {}", e)
                 })?;
 
-            cram_debug!(" PreservationMap entry {}: key={}{}", i, key[0] as char, key[1] as char);
+            eprintln!("[DEBUG] PreservationMap entry {}: key={}{}", i, key[0] as char, key[1] as char);
 
             match &key {
                 b"RN" => {
@@ -1192,7 +1182,7 @@ impl PreservationMap {
                     // Tag IDs: array of ITF-8 encoded tag IDs
                     // Each tag ID is encoded as an integer: (tag[0] << 16) | (tag[1] << 8) | tag[2]
                     let num_tags = decode_itf8(&mut reader)?;
-                    cram_debug!(" TD: num_tags={}, remaining_bytes={}", num_tags, data.len() - reader.position() as usize);
+                    eprintln!("[DEBUG] TD: num_tags={}, remaining_bytes={}", num_tags, data.len() - reader.position() as usize);
                     for j in 0..num_tags {
                         let tag_id = decode_itf8(&mut reader)?;
                         // Decode the tag ID back to 3 bytes
@@ -1201,7 +1191,7 @@ impl PreservationMap {
                             ((tag_id >> 8) & 0xFF) as u8,
                             (tag_id & 0xFF) as u8,
                         ];
-                        cram_debug!(" TD tag {}: tag_id={}, chars={}{}{}", j, tag_id, tag[0] as char, tag[1] as char, tag[2] as char);
+                        eprintln!("[DEBUG] TD tag {}: tag_id={}, chars={}{}{}", j, tag_id, tag[0] as char, tag[1] as char, tag[2] as char);
                         map.tag_ids.push(tag);
                     }
                 }
@@ -1251,39 +1241,36 @@ impl CompressionHeader {
 
         // Parse preservation map
         let preservation_map_size = decode_itf8(&mut reader)?;
-        cram_debug!(" CompressionHeader::parse: preservation_map_size={}", preservation_map_size);
+        eprintln!("[DEBUG] CompressionHeader::parse: preservation_map_size={}", preservation_map_size);
         let mut preservation_map_data = vec![0u8; preservation_map_size as usize];
         reader.read_exact(&mut preservation_map_data)
             .map_err(|e| BiometalError::InvalidCramFormat {
                 msg: format!("Failed to read preservation map: {}", e)
             })?;
         let preservation_map = PreservationMap::parse(&preservation_map_data)?;
-        cram_debug!(" Preservation map parsed successfully");
+        eprintln!("[DEBUG] Preservation map parsed successfully");
 
         // Parse data series encoding map
         let data_series_size = decode_itf8(&mut reader)?;
-        cram_debug!(" data_series_size={}", data_series_size);
+        eprintln!("[DEBUG] data_series_size={}", data_series_size);
         let mut data_series_encoding = std::collections::HashMap::new();
         let data_series_start = reader.position() as usize;
         let data_series_end = data_series_start + data_series_size as usize;
 
         let mut data_series_reader = Cursor::new(&data[data_series_start..data_series_end]);
         let num_data_series = decode_itf8(&mut data_series_reader)?;
-        cram_debug!(" Data series encoding: num_data_series={}", num_data_series);
+        eprintln!("[DEBUG] Data series encoding: num_data_series={}", num_data_series);
 
         // Dump first 50 bytes of data series section for debugging
-        #[cfg(feature = "cram-debug")]
-        {
-            let dump_len = std::cmp::min(50, data_series_end - data_series_start);
-            eprint!("[CRAM DEBUG] Data series section bytes (first {}): ", dump_len);
-            for i in 0..dump_len {
-                eprint!("{:02x} ", data[data_series_start + i]);
-                if i == 10 || i == 20 || i == 30 || i == 40 {
-                    eprint!("\n[CRAM DEBUG]   ");
-                }
+        let dump_len = std::cmp::min(50, data_series_end - data_series_start);
+        eprint!("[DEBUG] Data series section bytes (first {}): ", dump_len);
+        for i in 0..dump_len {
+            eprint!("{:02x} ", data[data_series_start + i]);
+            if i == 10 || i == 20 || i == 30 || i == 40 {
+                eprint!("\n[DEBUG]   ");
             }
-            eprintln!();
         }
+        eprintln!();
 
         for i in 0..num_data_series {
             // Read 2-byte data series key
@@ -1306,7 +1293,7 @@ impl CompressionHeader {
                 })?;
 
             if i < 10 {
-                cram_debug!(" Data series {}: key=[0x{:02x}, 0x{:02x}] ('{}{}'), encoding_id={}, param_size={}",
+                eprintln!("[DEBUG] Data series {}: key=[0x{:02x}, 0x{:02x}] ('{}{}'), encoding_id={}, param_size={}",
                     i, key[0], key[1],
                     if key[0] >= 32 && key[0] < 127 { key[0] as char } else { '?' },
                     if key[1] >= 32 && key[1] < 127 { key[1] as char } else { '?' },
@@ -1321,9 +1308,8 @@ impl CompressionHeader {
                 })?;
 
             // Debug: Print raw parameter bytes for first 10 data series
-            #[cfg(feature = "cram-debug")]
             if i < 10 {
-                eprint!("[CRAM DEBUG]   Param bytes: ");
+                eprint!("[DEBUG]   Param bytes: ");
                 for byte in &param_data {
                     eprint!("{:02x} ", byte);
                 }
@@ -1345,7 +1331,7 @@ impl CompressionHeader {
             if i < 10 {
                 match &encoding {
                     Encoding::Huffman { alphabet, bit_lengths, block_content_id } => {
-                        cram_debug!("   HUFFMAN: alphabet={:?}, bit_lengths={:?}, block_content_id={}",
+                        eprintln!("[DEBUG]   HUFFMAN: alphabet={:?}, bit_lengths={:?}, block_content_id={}",
                             alphabet, bit_lengths, block_content_id);
                     }
                     _ => {}
@@ -1361,18 +1347,18 @@ impl CompressionHeader {
 
         // Parse tag encoding map
         let tag_encoding_size = decode_itf8(&mut reader)?;
-        cram_debug!(" CompressionHeader: tag_encoding_size={}, data.len()={}, current_pos={}",
+        eprintln!("[DEBUG] CompressionHeader: tag_encoding_size={}, data.len()={}, current_pos={}",
             tag_encoding_size, data.len(), reader.position());
         let mut tag_encoding = std::collections::HashMap::new();
         let tag_encoding_start = reader.position() as usize;
         let tag_encoding_end = tag_encoding_start + tag_encoding_size as usize;
 
-        cram_debug!(" Tag encoding range: {}..{} (data available: {})",
+        eprintln!("[DEBUG] Tag encoding range: {}..{} (data available: {})",
             tag_encoding_start, tag_encoding_end, data.len());
 
         let mut tag_reader = Cursor::new(&data[tag_encoding_start..tag_encoding_end]);
         let num_tags = decode_itf8(&mut tag_reader)?;
-        cram_debug!(" num_tags={}", num_tags);
+        eprintln!("[DEBUG] num_tags={}", num_tags);
 
         for i in 0..num_tags {
             // Read tag ID (ITF-8)
@@ -1385,7 +1371,7 @@ impl CompressionHeader {
             let param_size = decode_itf8(&mut tag_reader)?;
 
             if i < 3 {
-                cram_debug!(" Tag {}: tag_id={}, encoding_id={}, param_size={}",
+                eprintln!("[DEBUG] Tag {}: tag_id={}, encoding_id={}, param_size={}",
                     i, tag_id, encoding_id, param_size);
             }
 
@@ -1494,8 +1480,8 @@ impl SliceHeader {
                 msg: format!("Failed to read embedded reference MD5: {}", e)
             })?;
 
-        // Note: Optional reference MD5 not implemented
-        // This is rarely used in practice and not critical for CRAM reading
+        // TODO Phase 2: Read optional reference MD5 based on actual CRAM flags
+        // For Phase 1, we skip this to avoid consuming block data
         let optional_ref_md5 = None;
 
         Ok(SliceHeader {
@@ -2128,8 +2114,8 @@ impl Slice {
     /// - Fetches reference subsequence for alignment span
     /// - Returns empty placeholder if no reference available
     ///
-    /// **Current Implementation** (Phase 2 Complete):
-    /// 1. ✅ Compression header parsing with encoding schemes for:
+    /// **Phase 2 Full TODO** (10-15 hours):
+    /// 1. Parse compression header to get encoding schemes for:
     ///    - FC: Feature codes (what kind of variation)
     ///    - FP: Feature positions (where in the read)
     ///    - BS: Base substitutions (what base to substitute)
@@ -2138,8 +2124,8 @@ impl Slice {
     ///    - BA: Bases (for unmapped reads)
     ///    - QS: Quality scores
     ///
-    /// 2. ✅ Decoding from core and external blocks:
-    ///    - Feature count decoded for each record
+    /// 2. Read from core block and external blocks:
+    ///    - Decode feature count for this record
     ///    - For each feature, decode: code, position, base/length
     ///
     /// 3. Apply features to reference sequence:
@@ -2214,10 +2200,10 @@ impl Slice {
         reference_path: Option<&PathBuf>,
         header_references: &[crate::io::bam::Reference],
     ) -> Result<Vec<u8>> {
-        // Decode sequence using reference-based reconstruction
-        // Features (substitutions, insertions, deletions) are decoded in record iteration
+        // Phase 2: Basic reference fetching with per-record read length
+        // TODO Phase 2 full: Decode CRAM features and apply to reference
 
-        cram_debug!(" decode_sequence_with_length: record={}, read_length={}, ref_id={}, start={}",
+        eprintln!("[DEBUG] decode_sequence_with_length: record={}, read_length={}, ref_id={}, start={}",
             record_index, read_length, self.header.reference_id, self.header.alignment_start);
 
         if let (Some(index), Some(ref_path)) = (reference_index, reference_path) {
@@ -2253,22 +2239,22 @@ impl Slice {
                         ref_path,
                     )?;
 
-                    cram_debug!(" Fetched sequence length: {}", sequence.len());
+                    eprintln!("[DEBUG] Fetched sequence length: {}", sequence.len());
                     return Ok(sequence.into_bytes());
                 } else {
-                    cram_debug!(" Reference ID {} not found in header", ref_id);
+                    eprintln!("[DEBUG] Reference ID {} not found in header", ref_id);
                 }
             } else {
-                cram_debug!(" Unmapped read (ref_id < 0)");
+                eprintln!("[DEBUG] Unmapped read (ref_id < 0)");
             }
         } else {
-            cram_debug!(" No reference available: index={}, path={}",
+            eprintln!("[DEBUG] No reference available: index={}, path={}",
                 reference_index.is_some(), reference_path.is_some());
         }
 
-        // Fallback: Return empty sequence when reference lookup fails
-        // This handles unmapped reads or reads where reference is unavailable
-        cram_debug!(" Returning empty sequence (reference lookup failed)");
+        // Fallback: Return placeholder sequence
+        // TODO Phase 2: Decode from blocks when reference not available
+        eprintln!("[DEBUG] Returning empty sequence (fallback)");
         Ok(Vec::new())
     }
 
@@ -2736,7 +2722,7 @@ impl<R: Read> CramReader<R> {
         // Read container header
         let container_header = ContainerHeader::parse(reader)?;
 
-        cram_debug!(" First container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
+        eprintln!("[DEBUG] First container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
             container_header.reference_id, container_header.start_position,
             container_header.num_records, container_header.length,
             container_header.is_sam_header_container());
@@ -2757,19 +2743,19 @@ impl<R: Read> CramReader<R> {
                 msg: format!("Failed to read SAM header container data: {}", e)
             })?;
 
-        cram_debug!(" Container data length: {}", container_data.len());
+        eprintln!("[DEBUG] Container data length: {}", container_data.len());
 
         // The container data contains a compression header block followed by SAM header block
         let mut cursor = std::io::Cursor::new(&container_data);
 
         // Read compression header block
         let compression_block = Block::parse(&mut cursor)?;
-        cram_debug!(" Compression block: method={}, content_type={}, size={}",
+        eprintln!("[DEBUG] Compression block: method={}, content_type={}, size={}",
             compression_block.method, compression_block.content_type, compression_block.data.len());
 
         // Decompress compression header - it contains both compression metadata AND SAM header text
         let compression_header_data = compression_block.decompress()?;
-        cram_debug!(" Decompressed compression header length: {}", compression_header_data.len());
+        eprintln!("[DEBUG] Decompressed compression header length: {}", compression_header_data.len());
 
         // The compression header structure for SAM header containers is:
         // - First 4 bytes: ITF-8 encoded length or marker
@@ -2793,7 +2779,7 @@ impl<R: Read> CramReader<R> {
                 msg: format!("Invalid UTF-8 in SAM header: {}", e)
             })?;
 
-        cram_debug!(" Extracted SAM header text ({} chars):\n{}", sam_header_text.len(), sam_header_text);
+        eprintln!("[DEBUG] Extracted SAM header text ({} chars):\n{}", sam_header_text.len(), sam_header_text);
 
         // Parse @SQ lines to extract reference information
         let mut references = Vec::new();
@@ -2812,7 +2798,7 @@ impl<R: Read> CramReader<R> {
                 }
 
                 if let (Some(ref_name), Some(ref_length)) = (name, length) {
-                    cram_debug!(" Found reference: {} (length: {})", ref_name, ref_length);
+                    eprintln!("[DEBUG] Found reference: {} (length: {})", ref_name, ref_length);
                     references.push(crate::io::bam::Reference {
                         name: ref_name,
                         length: ref_length as u32,
@@ -2821,21 +2807,21 @@ impl<R: Read> CramReader<R> {
             }
         }
 
-        cram_debug!(" Parsed {} references from SAM header", references.len());
+        eprintln!("[DEBUG] Parsed {} references from SAM header", references.len());
 
         Ok(Header::new(sam_header_text, references))
     }
 
     /// Create CRAM reader from any Read source.
     ///
-    /// **Implementation Status**: Phase 2 Complete - Full CRAM 3.0/3.1 support
+    /// **Implementation Status**: Phase 1 - Basic structure
     ///
-    /// # Features:
-    /// 1. ✅ CRAM magic number validation ("CRAM")
-    /// 2. ✅ Version parsing (3.0 and 3.1 supported)
-    /// 3. ✅ File ID extraction (20 bytes)
-    /// 4. ✅ SAM header container parsing
-    /// 5. ✅ Complete Header structure with reference sequences
+    /// # Phase 1 TODO:
+    /// 1. Read and validate CRAM magic number ("CRAM")
+    /// 2. Parse major/minor version
+    /// 3. Read file ID (20 bytes)
+    /// 4. Parse SAM header container
+    /// 5. Build Header structure
     ///
     /// # Example
     ///
@@ -3150,7 +3136,7 @@ impl<R: Read> CramRecords<R> {
         // Try to read next container header
         let container_header = match ContainerHeader::parse(&mut self.reader) {
             Ok(header) => {
-                cram_debug!(" Read container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
+                eprintln!("[DEBUG] Read container: ref_id={}, pos={}, num_records={}, length={}, is_sam_header={}",
                     header.reference_id, header.start_position, header.num_records,
                     header.length, header.is_sam_header_container());
                 header
@@ -3158,13 +3144,13 @@ impl<R: Read> CramRecords<R> {
             Err(e) => {
                 // Check if this is EOF
                 if e.to_string().contains("EOF container") {
-                    cram_debug!(" Reached EOF container");
+                    eprintln!("[DEBUG] Reached EOF container");
                     self.reached_eof = true;
                     return Ok(None);
                 }
                 // Check for end of file
                 if e.to_string().contains("failed to fill whole buffer") {
-                    cram_debug!(" Reached end of file (no more containers)");
+                    eprintln!("[DEBUG] Reached end of file (no more containers)");
                     self.reached_eof = true;
                     return Ok(None);
                 }
@@ -3185,21 +3171,21 @@ impl<R: Read> CramRecords<R> {
         }
 
         // Read and parse compression header block
-        cram_debug!(" Reading compression header block...");
+        eprintln!("[DEBUG] Reading compression header block...");
         let compression_header_block = Block::parse(&mut self.reader)?;
-        cram_debug!(" Compression header block: method={}, size={}, uncompressed={}",
+        eprintln!("[DEBUG] Compression header block: method={}, size={}, uncompressed={}",
             compression_header_block.method, compression_header_block.compressed_size,
             compression_header_block.uncompressed_size);
 
         // Decompress and parse the compression header
-        cram_debug!(" Decompressing compression header...");
+        eprintln!("[DEBUG] Decompressing compression header...");
         let compression_header_data = compression_header_block.decompress()?;
-        cram_debug!(" Decompressed size: {}", compression_header_data.len());
+        eprintln!("[DEBUG] Decompressed size: {}", compression_header_data.len());
 
-        cram_debug!(" Parsing compression header...");
+        eprintln!("[DEBUG] Parsing compression header...");
         let compression_header = CompressionHeader::parse(&compression_header_data)?;
 
-        cram_debug!(" Parsed compression header with {} data series encodings",
+        eprintln!("[DEBUG] Parsed compression header with {} data series encodings",
             compression_header.data_series_encoding.len());
 
         // Store compression header for decoding records
@@ -3207,32 +3193,32 @@ impl<R: Read> CramRecords<R> {
 
         // Read first slice block from container
         // The slice is contained within a Block structure
-        cram_debug!(" Reading slice block...");
+        eprintln!("[DEBUG] Reading slice block...");
         let slice_block = Block::parse(&mut self.reader)?;
-        cram_debug!(" Slice block: method={}, size={}, uncompressed={}",
+        eprintln!("[DEBUG] Slice block: method={}, size={}, uncompressed={}",
             slice_block.method, slice_block.compressed_size,
             slice_block.uncompressed_size);
 
         // Decompress the slice block to get slice header + data
         let slice_data = slice_block.decompress()?;
-        cram_debug!(" Decompressed slice data: {} bytes", slice_data.len());
-        cram_debug!(" Slice data (first 40 bytes): {:02x?}", &slice_data[..std::cmp::min(40, slice_data.len())]);
+        eprintln!("[DEBUG] Decompressed slice data: {} bytes", slice_data.len());
+        eprintln!("[DEBUG] Slice data (first 40 bytes): {:02x?}", &slice_data[..std::cmp::min(40, slice_data.len())]);
 
         // Parse slice HEADER ONLY from decompressed data
         let mut slice_reader = std::io::Cursor::new(&slice_data);
         let slice_header = SliceHeader::parse(&mut slice_reader)?;
 
-        cram_debug!(" Slice header: ref_id={}, start={}, span={}, num_records={}, num_blocks={}",
+        eprintln!("[DEBUG] Slice header: ref_id={}, start={}, span={}, num_records={}, num_blocks={}",
             slice_header.reference_id, slice_header.alignment_start, slice_header.alignment_span,
             slice_header.num_records, slice_header.num_blocks);
-        cram_debug!(" Block content IDs: {:?}", slice_header.block_content_ids);
+        eprintln!("[DEBUG] Block content IDs: {:?}", slice_header.block_content_ids);
 
         // Read the slice data blocks from the container (num_blocks blocks)
         let mut blocks = Vec::with_capacity(slice_header.num_blocks as usize);
-        cram_debug!(" Reading {} slice data blocks from container...", slice_header.num_blocks);
+        eprintln!("[DEBUG] Reading {} slice data blocks from container...", slice_header.num_blocks);
         for i in 0..slice_header.num_blocks {
             let block = Block::parse(&mut self.reader)?;
-            cram_debug!("   Block {}: id={}, method={}, size={}", i, block.block_id, block.method, block.compressed_size);
+            eprintln!("[DEBUG]   Block {}: id={}, method={}, size={}", i, block.block_id, block.method, block.compressed_size);
             blocks.push(block);
         }
 
@@ -3253,7 +3239,7 @@ impl<R: Read> CramRecords<R> {
             self.block_id_to_index.insert(block.block_id, index);
         }
 
-        cram_debug!(" Decompressed {} blocks for slice", self.decompressed_blocks.len());
+        eprintln!("[DEBUG] Decompressed {} blocks for slice", self.decompressed_blocks.len());
 
         Ok(Some(slice))
     }
@@ -3283,9 +3269,9 @@ impl<R: Read> Iterator for CramRecords<R> {
 
                     // Debug: Print blocks HashMap contents (first record only)
                     if record_index == 0 {
-                        cram_debug!(" blocks HashMap for record {}:", record_index);
+                        eprintln!("[DEBUG] blocks HashMap for record {}:", record_index);
                         for (&block_id, data) in blocks.iter() {
-                            cram_debug!("   block_id={}, size={}", block_id, data.len());
+                            eprintln!("[DEBUG]   block_id={}, size={}", block_id, data.len());
                         }
                     }
 
@@ -3295,20 +3281,20 @@ impl<R: Read> Iterator for CramRecords<R> {
                         if let Some(rl_encoding) = comp_header.data_series_encoding.get(&DataSeries::RL) {
                             match rl_encoding.decode_int(&blocks, &mut self.block_positions) {
                                 Ok(rl) => {
-                                    cram_debug!(" Decoded RL for record {}: {}", record_index, rl);
+                                    eprintln!("[DEBUG] Decoded RL for record {}: {}", record_index, rl);
                                     rl
                                 }
                                 Err(e) => {
-                                    cram_debug!(" Failed to decode RL: {}, using slice span", e);
+                                    eprintln!("[DEBUG] Failed to decode RL: {}, using slice span", e);
                                     slice.header.alignment_span
                                 }
                             }
                         } else {
-                            cram_debug!(" No RL encoding in compression header, using slice span");
+                            eprintln!("[DEBUG] No RL encoding in compression header, using slice span");
                             slice.header.alignment_span
                         }
                     } else {
-                        cram_debug!(" No compression header available, using slice span");
+                        eprintln!("[DEBUG] No compression header available, using slice span");
                         slice.header.alignment_span
                     };
 
@@ -3346,7 +3332,7 @@ impl<R: Read> Iterator for CramRecords<R> {
                                 parse_cigar_string(&cigar_str)
                             }
                             Err(e) => {
-                                cram_debug!(" Failed to decode features for CIGAR: {}", e);
+                                eprintln!("[DEBUG] Failed to decode features for CIGAR: {}", e);
                                 // Default to perfect match
                                 vec![CigarOp::Match(read_length as u32)]
                             }
@@ -3425,7 +3411,7 @@ impl<R: Read> Iterator for CramRecords<R> {
                         template_length: 0,
                         sequence,
                         quality,
-                        tags: Tags::new(),  // Known limitation: SAM tags not decoded from CRAM blocks
+                        tags: Tags::new(),  // TODO Phase 2: Decode tags from blocks
                     };
 
                     return Some(Ok(record));
@@ -3468,74 +3454,10 @@ mod tests {
         data
     }
 
-    /// Helper: Create a minimal valid CRAM file with SAM header container.
-    ///
-    /// This creates a complete CRAM file structure:
-    /// 1. File definition (26 bytes)
-    /// 2. SAM header container (with ITF-8/LTF-8 encoded fields)
-    /// 3. EOF container
-    fn make_minimal_valid_cram(major: u8, minor: u8, sam_header: Option<&str>) -> Vec<u8> {
-        let mut data = Vec::new();
-
-        // 1. File definition (26 bytes)
-        data.extend_from_slice(b"CRAM");       // Magic (4 bytes)
-        data.push(major);                       // Major version
-        data.push(minor);                       // Minor version
-        data.extend_from_slice(&[0u8; 20]);    // File ID (20 bytes)
-
-        // 2. SAM header container
-        let sam_text = sam_header.unwrap_or("@HD\tVN:1.6\tSO:coordinate\n");
-
-        // Build compression header block containing SAM header text
-        // The block data format is:
-        // - First 4 bytes: marker/length (will be skipped by parser)
-        // - SAM header text
-        let sam_bytes = sam_text.as_bytes();
-        let mut block_data = Vec::new();
-        block_data.extend_from_slice(&[0u8; 4]);  // 4-byte prefix (skipped by parser)
-        block_data.extend_from_slice(sam_bytes);
-
-        // Build block bytes
-        let mut block_bytes = Vec::new();
-        block_bytes.push(0);                                    // method = 0 (uncompressed)
-        block_bytes.push(0);                                    // content_type = 0 (compression header)
-        encode_itf8(&mut block_bytes, 0);                       // block_id = 0 (ITF-8)
-        encode_itf8(&mut block_bytes, block_data.len() as i32); // compressed_size (ITF-8)
-        encode_itf8(&mut block_bytes, block_data.len() as i32); // uncompressed_size (ITF-8)
-        block_bytes.extend_from_slice(&block_data);            // Block data (4-byte prefix + SAM header)
-        block_bytes.extend_from_slice(&0u32.to_be_bytes());    // CRC32 (placeholder)
-
-        // Build container header (using ITF-8/LTF-8 encoding)
-        let mut container_header = Vec::new();
-        encode_itf8(&mut container_header, -1);    // ref_id = -1 (SAM header)
-        encode_itf8(&mut container_header, 0);     // start_position = 0
-        encode_itf8(&mut container_header, 0);     // alignment_span = 0
-        encode_itf8(&mut container_header, 0);     // num_records = 0
-        encode_ltf8(&mut container_header, 0);     // record_counter = 0
-        encode_ltf8(&mut container_header, 0);     // bases = 0
-        encode_itf8(&mut container_header, 1);     // num_blocks = 1
-        encode_itf8(&mut container_header, 0);     // num_landmarks = 0 (no landmarks array)
-        container_header.extend_from_slice(&0u32.to_be_bytes()); // CRC32 (placeholder)
-
-        // Container length = size of BLOCKS ONLY (not including header fields + CRC32)
-        // The parser reads container_length AFTER reading the header fields/CRC32
-        let container_length = block_bytes.len() as i32;
-
-        // Write container header
-        data.extend_from_slice(&container_length.to_le_bytes());  // Container length (fixed i32)
-        data.extend_from_slice(&container_header);                 // Container header (ITF-8/LTF-8 encoded)
-        data.extend_from_slice(&block_bytes);                      // Block data
-
-        // 3. EOF container (length = 0 marks end of file)
-        data.extend_from_slice(&0i32.to_le_bytes());
-
-        data
-    }
-
     #[test]
     fn test_cram_magic_number_valid() {
         // Valid CRAM 3.0 file
-        let data = make_minimal_valid_cram(3, 0, None);
+        let data = make_cram_file_definition(3, 0);
         let reader = CramReader::new(Cursor::new(data)).unwrap();
         assert_eq!(reader.major_version(), 3);
         assert_eq!(reader.minor_version(), 0);
@@ -3559,7 +3481,7 @@ mod tests {
     #[test]
     fn test_cram_version_3_0() {
         // CRAM 3.0 (supported)
-        let data = make_minimal_valid_cram(3, 0, None);
+        let data = make_cram_file_definition(3, 0);
         let reader = CramReader::new(Cursor::new(data)).unwrap();
         assert_eq!(reader.major_version(), 3);
         assert_eq!(reader.minor_version(), 0);
@@ -3568,7 +3490,7 @@ mod tests {
     #[test]
     fn test_cram_version_3_1() {
         // CRAM 3.1 (supported)
-        let data = make_minimal_valid_cram(3, 1, None);
+        let data = make_cram_file_definition(3, 1);
         let reader = CramReader::new(Cursor::new(data)).unwrap();
         assert_eq!(reader.major_version(), 3);
         assert_eq!(reader.minor_version(), 1);
@@ -3576,20 +3498,22 @@ mod tests {
 
     #[test]
     fn test_cram_version_2_x_rejected() {
-        // CRAM 2.x (not supported) - only test file definition since full file would fail parsing anyway
+        // CRAM 2.x (not supported)
         let data = make_cram_file_definition(2, 0);
         let result = CramReader::new(Cursor::new(data));
         assert!(result.is_err());
-        // Error will be about missing container, but that's fine - we just want to reject 2.x
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("CRAM 2.x is not supported"));
     }
 
     #[test]
     fn test_cram_version_unsupported() {
-        // CRAM 4.0 (future version, not supported) - only test file definition
+        // CRAM 4.0 (future version, not supported)
         let data = make_cram_file_definition(4, 0);
         let result = CramReader::new(Cursor::new(data));
         assert!(result.is_err());
-        // Error will be about missing container or version check
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Unsupported CRAM version: 4.0"));
     }
 
     #[test]
@@ -3797,35 +3721,66 @@ mod tests {
     ) -> Vec<u8> {
         let mut data = Vec::new();
 
-        // Length (4 bytes, LITTLE-ENDIAN as per CRAM spec!)
-        data.extend_from_slice(&length.to_le_bytes());
+        // Length (4 bytes, big-endian)
+        data.extend_from_slice(&length.to_be_bytes());
 
-        // Reference ID (ITF-8)
-        encode_itf8(&mut data, reference_id);
+        // Reference ID (ITF-8) - for testing, use simplified encoding
+        // In reality, CRAM uses signed representation, but for tests we'll use unsigned
+        if reference_id == -1 {
+            // Special case: -1 is commonly used, encode as 0xFF in 1-byte
+            // Actually, -1 should be all bits set in ITF-8
+            // For simplicity in tests, let's use a 5-byte encoding
+            data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        } else if reference_id >= 0 && reference_id < 128 {
+            data.push(reference_id as u8);
+        } else {
+            // 2-byte encoding for positive values >= 128
+            data.push(0x80 | ((reference_id >> 8) & 0x3F) as u8);
+            data.push((reference_id & 0xFF) as u8);
+        }
+
+        // Helper to encode ITF-8 (simplified)
+        let encode_itf8 = |value: i32| -> Vec<u8> {
+            if value < 128 {
+                vec![value as u8]
+            } else if value < 16384 {
+                vec![
+                    0x80 | ((value >> 8) & 0x3F) as u8,
+                    (value & 0xFF) as u8,
+                ]
+            } else {
+                // For larger values, use 3-byte encoding
+                vec![
+                    0xC0 | ((value >> 16) & 0x1F) as u8,
+                    ((value >> 8) & 0xFF) as u8,
+                    (value & 0xFF) as u8,
+                ]
+            }
+        };
 
         // Start position (ITF-8)
-        encode_itf8(&mut data, start_pos);
+        data.extend_from_slice(&encode_itf8(start_pos));
 
         // Alignment span (ITF-8)
-        encode_itf8(&mut data, span);
+        data.extend_from_slice(&encode_itf8(span));
 
         // Number of records (ITF-8)
-        encode_itf8(&mut data, num_records);
+        data.extend_from_slice(&encode_itf8(num_records));
 
-        // Record counter (LTF-8)
-        encode_ltf8(&mut data, 0);
+        // Record counter (LTF-8, simplified: 1-byte for 0)
+        data.push(0x00);
 
-        // Bases (LTF-8)
-        encode_ltf8(&mut data, 0);
+        // Bases (LTF-8, simplified: 1-byte for 0)
+        data.push(0x00);
 
-        // Number of blocks (ITF-8)
-        encode_itf8(&mut data, 1); // 1 block
+        // Number of blocks (ITF-8, simplified: 1-byte)
+        data.push(0x01); // 1 block
 
         // Landmarks count (ITF-8)
-        encode_itf8(&mut data, 0); // 0 landmarks
+        data.push(0x00); // 0 landmarks
 
-        // CRC32 (4 bytes, big-endian placeholder)
-        data.extend_from_slice(&0u32.to_be_bytes());
+        // CRC32 (4 bytes, dummy value)
+        data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
 
         data
     }
@@ -3845,24 +3800,24 @@ mod tests {
 
     #[test]
     fn test_container_header_sam_header_detection() {
-        // Test SAM header container: ref_id=-1, start=0, num_records=0
-        let data = make_container_header(500, -1, 0, 0, 0);
+        // For now, manually construct a SAM header container
+        // SAM header containers have: ref_id=-1, start=0, num_records=0
+        // We'll test the is_sam_header_container() logic with known values
+        let data = make_container_header(500, 0, 0, 0, 0);
         let mut reader = Cursor::new(data);
 
-        let header = super::ContainerHeader::parse(&mut reader).unwrap();
+        let mut header = super::ContainerHeader::parse(&mut reader).unwrap();
+        // Manually set reference_id to -1 to test the detection logic
+        header.reference_id = -1;
         assert!(header.is_sam_header_container());
 
-        // Test non-SAM-header container: has records
-        let data2 = make_container_header(500, 0, 100, 500, 10);
-        let mut reader2 = Cursor::new(data2);
-        let header2 = super::ContainerHeader::parse(&mut reader2).unwrap();
-        assert!(!header2.is_sam_header_container());
+        // Test that non-SAM-header containers are correctly identified
+        header.reference_id = 0;
+        assert!(!header.is_sam_header_container());
 
-        // Test non-SAM-header container: non-zero start position
-        let data3 = make_container_header(500, 0, 100, 0, 0);
-        let mut reader3 = Cursor::new(data3);
-        let header3 = super::ContainerHeader::parse(&mut reader3).unwrap();
-        assert!(!header3.is_sam_header_container());
+        header.reference_id = -1;
+        header.num_records = 10; // Has records, not a SAM header
+        assert!(!header.is_sam_header_container());
     }
 
     #[test]
@@ -4038,92 +3993,22 @@ mod tests {
 
     /// Helper: Encode a 32-bit integer as ITF-8
     fn encode_itf8(buf: &mut Vec<u8>, value: i32) {
-        // ITF-8 encoding ranges (unsigned interpretation):
-        // 1 byte:  0 to 127 (0x00-0x7F)
-        // 2 bytes: 128 to 16383
-        // 3 bytes: 16384 to 2097151
-        // 4 bytes: 2097152 to 268435455
-        // 5 bytes: 268435456 to 4294967295 (and all negative numbers)
-
-        if value >= 0 && value < 128 {
+        if value < 128 {
             buf.push(value as u8);
-        } else if value >= 0 && value < 16384 {
+        } else if value < 16384 {
             buf.push(0x80 | ((value >> 8) & 0x3F) as u8);
             buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 2097152 {
+        } else if value < 2097152 {
             buf.push(0xC0 | ((value >> 16) & 0x1F) as u8);
             buf.push(((value >> 8) & 0xFF) as u8);
             buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 268435456 {
+        } else if value < 268435456 {
             buf.push(0xE0 | ((value >> 24) & 0x0F) as u8);
             buf.push(((value >> 16) & 0xFF) as u8);
             buf.push(((value >> 8) & 0xFF) as u8);
             buf.push((value & 0xFF) as u8);
         } else {
-            // 5-byte encoding for large positive values and ALL negative values
-            buf.push(0xF0 | (((value as u32 >> 28) & 0x0F) as u8));
-            buf.push(((value >> 24) & 0xFF) as u8);
-            buf.push(((value >> 16) & 0xFF) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        }
-    }
-
-    /// Helper: Encode a 64-bit integer as LTF-8
-    fn encode_ltf8(buf: &mut Vec<u8>, value: i64) {
-        // LTF-8 encoding ranges (similar to ITF-8 but for 64-bit values)
-        // Check for non-negative values first
-        if value >= 0 && value < 128 {
-            buf.push(value as u8);
-        } else if value >= 0 && value < 16384 {
-            buf.push(0x80 | ((value >> 8) & 0x3F) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 2097152 {
-            buf.push(0xC0 | ((value >> 16) & 0x1F) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 268435456 {
-            buf.push(0xE0 | ((value >> 24) & 0x0F) as u8);
-            buf.push(((value >> 16) & 0xFF) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 34359738368 {
-            buf.push(0xF0 | ((value >> 32) & 0x07) as u8);
-            buf.push(((value >> 24) & 0xFF) as u8);
-            buf.push(((value >> 16) & 0xFF) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 4398046511104 {
-            buf.push(0xF8 | ((value >> 40) & 0x03) as u8);
-            buf.push(((value >> 32) & 0xFF) as u8);
-            buf.push(((value >> 24) & 0xFF) as u8);
-            buf.push(((value >> 16) & 0xFF) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 562949953421312 {
-            buf.push(0xFC | ((value >> 48) & 0x01) as u8);
-            buf.push(((value >> 40) & 0xFF) as u8);
-            buf.push(((value >> 32) & 0xFF) as u8);
-            buf.push(((value >> 24) & 0xFF) as u8);
-            buf.push(((value >> 16) & 0xFF) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else if value >= 0 && value < 72057594037927936 {
-            buf.push(0xFE);
-            buf.push(((value >> 48) & 0xFF) as u8);
-            buf.push(((value >> 40) & 0xFF) as u8);
-            buf.push(((value >> 32) & 0xFF) as u8);
-            buf.push(((value >> 24) & 0xFF) as u8);
-            buf.push(((value >> 16) & 0xFF) as u8);
-            buf.push(((value >> 8) & 0xFF) as u8);
-            buf.push((value & 0xFF) as u8);
-        } else {
-            // 9-byte encoding for large positive values and ALL negative values
-            buf.push(0xFF);
-            buf.push(((value >> 56) & 0xFF) as u8);
-            buf.push(((value >> 48) & 0xFF) as u8);
-            buf.push(((value >> 40) & 0xFF) as u8);
-            buf.push(((value >> 32) & 0xFF) as u8);
+            buf.push(0xF0);
             buf.push(((value >> 24) & 0xFF) as u8);
             buf.push(((value >> 16) & 0xFF) as u8);
             buf.push(((value >> 8) & 0xFF) as u8);
@@ -4215,32 +4100,24 @@ mod tests {
         let mut data = Vec::new();
 
         // Preservation map: 1 entry (RN: true)
-        let mut pres_map_data = Vec::new();
-        pres_map_data.push(0x01); // num entries = 1 (ITF-8)
-        pres_map_data.extend_from_slice(b"RN"); // key
-        pres_map_data.push(0x01); // value = true
-        encode_itf8(&mut data, pres_map_data.len() as i32); // preservation map size
-        data.extend_from_slice(&pres_map_data);
+        data.push(0x04); // size = 4 bytes (1 for num_entries + 2 for key + 1 for value)
+        data.push(0x01); // num entries = 1 (ITF-8)
+        data.extend_from_slice(b"RN"); // key
+        data.push(0x01); // value = true
 
         // Data series encoding: 1 entry (BF: External block 1)
-        let mut ds_encoding_data = Vec::new();
-        encode_itf8(&mut ds_encoding_data, 1); // num entries = 1
-        ds_encoding_data.extend_from_slice(b"BF"); // key = BAM flags
-        encode_itf8(&mut ds_encoding_data, 1); // encoding ID = EXTERNAL
-        encode_itf8(&mut ds_encoding_data, 1); // param_size = 1 byte
-        encode_itf8(&mut ds_encoding_data, 1); // block_content_id = 1
-        encode_itf8(&mut data, ds_encoding_data.len() as i32); // data series size
-        data.extend_from_slice(&ds_encoding_data);
+        data.push(0x05); // size = 5 bytes (1 for num_entries + 2 for key + 1 for encoding_id + 1 for block_id)
+        data.push(0x01); // num entries = 1 (ITF-8)
+        data.extend_from_slice(b"BF"); // key = BAM flags
+        data.push(0x01); // encoding ID = EXTERNAL
+        data.push(0x01); // block_content_id = 1 (ITF-8)
 
         // Tag encoding: 1 entry (tag 100: External block 2)
-        let mut tag_encoding_data = Vec::new();
-        encode_itf8(&mut tag_encoding_data, 1); // num entries = 1
-        encode_itf8(&mut tag_encoding_data, 100); // tag ID = 100
-        encode_itf8(&mut tag_encoding_data, 1); // encoding ID = EXTERNAL
-        encode_itf8(&mut tag_encoding_data, 1); // param_size = 1 byte
-        encode_itf8(&mut tag_encoding_data, 2); // block_content_id = 2
-        encode_itf8(&mut data, tag_encoding_data.len() as i32); // tag encoding size
-        data.extend_from_slice(&tag_encoding_data);
+        data.push(0x04); // size = 4 bytes (1 for num_entries + 1 for tag_id + 1 for encoding_id + 1 for block_id)
+        data.push(0x01); // num entries = 1 (ITF-8)
+        data.push(0x64); // tag ID = 100 (ITF-8)
+        data.push(0x01); // encoding ID = EXTERNAL
+        data.push(0x02); // block_content_id = 2 (ITF-8)
 
         let header = super::CompressionHeader::parse(&data).unwrap();
 
@@ -4282,30 +4159,45 @@ mod tests {
     ) -> Vec<u8> {
         let mut data = Vec::new();
 
-        // Reference ID (ITF-8)
-        encode_itf8(&mut data, reference_id);
+        // Helper to encode ITF-8 (reuse from container tests)
+        let encode_itf8 = |value: i32| -> Vec<u8> {
+            if value < 128 {
+                vec![value as u8]
+            } else if value < 16384 {
+                vec![
+                    0x80 | ((value >> 8) & 0x3F) as u8,
+                    (value & 0xFF) as u8,
+                ]
+            } else {
+                vec![
+                    0xC0 | ((value >> 16) & 0x1F) as u8,
+                    ((value >> 8) & 0xFF) as u8,
+                    (value & 0xFF) as u8,
+                ]
+            }
+        };
 
-        // Alignment start (ITF-8)
-        encode_itf8(&mut data, start);
+        // Reference ID
+        data.extend_from_slice(&encode_itf8(reference_id));
 
-        // Alignment span (ITF-8)
-        encode_itf8(&mut data, span);
+        // Alignment start
+        data.extend_from_slice(&encode_itf8(start));
 
-        // Number of records (ITF-8)
-        encode_itf8(&mut data, num_records);
+        // Alignment span
+        data.extend_from_slice(&encode_itf8(span));
 
-        // Record counter (LTF-8)
-        encode_ltf8(&mut data, 0);
+        // Number of records
+        data.extend_from_slice(&encode_itf8(num_records));
 
-        // Number of blocks (ITF-8)
-        encode_itf8(&mut data, num_blocks);
+        // Record counter (LTF-8, simplified: 1-byte for 0)
+        data.push(0x00);
 
-        // Number of content IDs (ITF-8) - MUST be present!
-        encode_itf8(&mut data, num_blocks);
+        // Number of blocks
+        data.extend_from_slice(&encode_itf8(num_blocks));
 
-        // Block content IDs (ITF-8 array) - content IDs 0 to num_blocks-1
-        for i in 0..num_blocks {
-            encode_itf8(&mut data, i);
+        // Block content IDs (simplified: all zeros)
+        for _ in 0..num_blocks {
+            data.push(0x00);
         }
 
         // Embedded reference MD5 (16 bytes)
@@ -4328,7 +4220,6 @@ mod tests {
         assert_eq!(header.num_records, 10);
         assert_eq!(header.num_blocks, 2);
         assert_eq!(header.block_content_ids.len(), 2);
-        assert_eq!(header.block_content_ids, vec![0, 1]); // Content IDs are 0, 1
         assert_eq!(header.embedded_ref_md5, [0u8; 16]);
         assert_eq!(header.optional_ref_md5, None);
     }
@@ -4399,8 +4290,17 @@ mod tests {
         // We can't easily test with real CRAM files without a full writer,
         // so we verify the structure compiles and basic logic works
 
-        // Create a minimal valid CRAM file (file definition + SAM header container + EOF)
-        let cram_data = make_minimal_valid_cram(3, 0, None);
+        // Create a minimal CRAM file structure
+        let mut cram_data = Vec::new();
+
+        // File definition
+        cram_data.extend_from_slice(b"CRAM");  // Magic
+        cram_data.push(3);  // Major version
+        cram_data.push(0);  // Minor version
+        cram_data.extend_from_slice(&[0u8; 20]);  // File ID
+
+        // For now, this is enough to test the reader initialization
+        // Full integration tests will come in Phase 2 when we can generate proper CRAM data
 
         let mut reader = Cursor::new(cram_data);
         let cram_reader = super::CramReader::new(reader).unwrap();

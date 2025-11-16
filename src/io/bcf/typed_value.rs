@@ -322,4 +322,120 @@ mod tests {
         let value = TypedValue::read(&mut cursor).unwrap();
         assert_eq!(value, TypedValue::Missing);
     }
+
+    #[test]
+    fn test_missing_value_int16() {
+        // Type byte: 0x12 = Int16 + length 1
+        // Value: 0x8000 (i16::MIN) = missing
+        let data = vec![0x12, 0x00, 0x80];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::Missing);
+    }
+
+    #[test]
+    fn test_missing_value_int32() {
+        // Type byte: 0x13 = Int32 + length 1
+        // Value: 0x80000000 (i32::MIN) = missing
+        let data = vec![0x13, 0x00, 0x00, 0x00, 0x80];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::Missing);
+    }
+
+    #[test]
+    fn test_missing_value_float() {
+        // Type byte: 0x15 = Float + length 1
+        // Value: 0x7F800001 = missing
+        let data = vec![0x15, 0x01, 0x00, 0x80, 0x7F];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::Missing);
+    }
+
+    #[test]
+    fn test_float_array() {
+        // Type byte: 0x25 = Float (0x05) + length 2 (0x20)
+        let data = vec![
+            0x25,
+            0x00, 0x00, 0x80, 0x3F, // 1.0 in little-endian
+            0x00, 0x00, 0x00, 0x40, // 2.0 in little-endian
+        ];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::FloatArray(vec![1.0, 2.0]));
+    }
+
+    #[test]
+    fn test_int16_array() {
+        // Type byte: 0x32 = Int16 (0x02) + length 3 (0x30)
+        let data = vec![
+            0x32,
+            0x01, 0x00, // 1
+            0x02, 0x00, // 2
+            0x03, 0x00, // 3
+        ];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::Int16Array(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_int32_array() {
+        // Type byte: 0x23 = Int32 (0x03) + length 2 (0x20)
+        let data = vec![
+            0x23,
+            0x64, 0x00, 0x00, 0x00, // 100
+            0xC8, 0x00, 0x00, 0x00, // 200
+        ];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::Int32Array(vec![100, 200]));
+    }
+
+    #[test]
+    fn test_string_with_null_terminator() {
+        // Type byte: 0x67 = Char (0x07) + length 6 (0x60)
+        let data = vec![0x67, b'h', b'e', b'l', b'l', b'o', 0x00];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::String("hello".to_string()));
+    }
+
+    #[test]
+    fn test_zero_length_value() {
+        // Type byte: 0x01 = Int8 (0x01) + length 0 (0x00)
+        let data = vec![0x01];
+        let mut cursor = Cursor::new(data);
+        let value = TypedValue::read(&mut cursor).unwrap();
+        assert_eq!(value, TypedValue::Missing);
+    }
+
+    #[test]
+    fn test_as_int_conversions() {
+        assert_eq!(TypedValue::Int8(42).as_int(), Some(42));
+        assert_eq!(TypedValue::Int16(1000).as_int(), Some(1000));
+        assert_eq!(TypedValue::Int32(100000).as_int(), Some(100000));
+        assert_eq!(TypedValue::Float(3.14).as_int(), None);
+        assert_eq!(TypedValue::String("test".to_string()).as_int(), None);
+    }
+
+    #[test]
+    fn test_as_float_conversions() {
+        assert_eq!(TypedValue::Float(3.14).as_float(), Some(3.14));
+        assert_eq!(TypedValue::Int8(42).as_float(), Some(42.0));
+        assert_eq!(TypedValue::Int16(1000).as_float(), Some(1000.0));
+        assert_eq!(TypedValue::Int32(100000).as_float(), Some(100000.0));
+        assert_eq!(TypedValue::String("test".to_string()).as_float(), None);
+    }
+
+    #[test]
+    fn test_as_string_conversion() {
+        assert_eq!(
+            TypedValue::String("hello".to_string()).as_string(),
+            Some("hello")
+        );
+        assert_eq!(TypedValue::Int8(42).as_string(), None);
+        assert_eq!(TypedValue::Float(3.14).as_string(), None);
+    }
 }

@@ -57,18 +57,34 @@ impl BcfHeader {
         for line in text.lines() {
             if line.starts_with("##FILTER=") {
                 if let Some(id) = extract_id(line) {
-                    filter_dict.insert(id, filter_idx);
-                    filter_idx += 1;
+                    let idx = extract_idx(line).unwrap_or_else(|| {
+                        if id == "PASS" {
+                            0
+                        } else {
+                            let next_idx = filter_idx;
+                            filter_idx += 1;
+                            next_idx
+                        }
+                    });
+                    filter_dict.insert(id, idx);
                 }
             } else if line.starts_with("##INFO=") {
                 if let Some(id) = extract_id(line) {
-                    info_dict.insert(id, info_idx);
-                    info_idx += 1;
+                    let idx = extract_idx(line).unwrap_or_else(|| {
+                        let next_idx = info_idx;
+                        info_idx += 1;
+                        next_idx
+                    });
+                    info_dict.insert(id, idx);
                 }
             } else if line.starts_with("##FORMAT=") {
                 if let Some(id) = extract_id(line) {
-                    format_dict.insert(id, format_idx);
-                    format_idx += 1;
+                    let idx = extract_idx(line).unwrap_or_else(|| {
+                        let next_idx = format_idx;
+                        format_idx += 1;
+                        next_idx
+                    });
+                    format_dict.insert(id, idx);
                 }
             } else if line.starts_with("##contig=") {
                 if let Some(id) = extract_id(line) {
@@ -162,6 +178,18 @@ fn extract_id(line: &str) -> Option<String> {
         .split(',')
         .next()
         .map(|s| s.to_string())
+}
+
+/// Extract IDX from BCF header line.
+///
+/// Parses lines like: `##INFO=<ID=DP,...,IDX=2>`
+fn extract_idx(line: &str) -> Option<usize> {
+    line.split("IDX=")
+        .nth(1)?
+        .split('>')
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]
