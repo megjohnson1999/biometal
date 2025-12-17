@@ -114,6 +114,43 @@ for record in stream:
     mean_q = biometal.mean_quality(record.quality)
 ```
 
+### Command-Line Interface (CLI)
+
+biometal now includes a **production-ready CLI** with 16 commands across 5 categories:
+
+**Core Statistics** (ARM NEON accelerated):
+```bash
+biometal count-bases dataset.fq       # 16.7× NEON speedup
+biometal gc-content samples/*.fa      # 20.3× NEON speedup
+biometal mean-quality reads.fq        # 25.1× NEON speedup
+biometal complexity-score seqs.fa     # 15-18× NEON speedup
+```
+
+**Sequence Operations**:
+```bash
+biometal reverse-complement input.fa
+biometal validate-dna sequences.fa
+biometal trim-quality --threshold 20 reads.fq
+biometal extract-region --start 100 --end 200 genome.fa
+```
+
+**Pattern Matching** (NEON optimized):
+```bash
+biometal find-pattern --pattern AGATCGGAAGAGC reads.fq
+biometal find-adapters contaminated.fq  # Detect Illumina adapters
+biometal count-pattern --pattern NNNN masked.fa
+```
+
+**Format Conversion**:
+```bash
+biometal fastq-to-fasta reads.fq > output.fa
+biometal count-reads dataset.fq
+```
+
+**Performance**: 5× faster than awk/grep for complex operations, constant 5MB memory.
+
+See `PERFORMANCE_BENCHMARK_RESULTS.md` for detailed benchmarks.
+
 ### 📝 NEW: Writing Genomic Data (Nov 2025)
 
 biometal now supports **writing** for tab-delimited formats with automatic compression:
