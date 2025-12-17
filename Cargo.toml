@@ -132,6 +132,11 @@ ndarray = { version = "0.16", optional = true }  # For ONNX tensor operations
 name = "biometal"
 crate-type = ["rlib", "cdylib"]
 
+[[bin]]
+name = "biometal"
+path = "src/bin/biometal.rs"
+
+
 [features]
 default = ["network"]  # Enable network streaming by default (Rule 6)
 network = ["dep:reqwest", "dep:lru", "dep:tokio", "dep:bytes"]

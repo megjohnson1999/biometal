@@ -18,6 +18,7 @@
 //! - `record_ops`: Record-level operations (extract_region, format conversion, etc.)
 //! - `trimming`: Fixed and quality-based trimming operations
 //! - `masking`: Quality-based masking operations
+//! - `pattern_match`: NEON-optimized pattern matching and substring search
 //! - `kmer`: K-mer operations (scalar-only, data-structure-bound)
 //! - `nthash`: ntHash rolling hash for genomic sequences (v1.3.0+)
 //! - `sliding_min`: Sliding window minimum (monotonic deque, O(1) amortized)
@@ -29,6 +30,7 @@ pub mod gc_content;
 pub mod kmer;
 pub mod masking;
 pub mod nthash;
+pub mod pattern_match;  // Pattern matching with ARM NEON optimization
 pub mod quality_filter;
 pub mod sliding_min;
 pub mod record_ops;
@@ -38,6 +40,7 @@ pub mod trimming;
 pub use base_counting::count_bases;
 pub use complexity::{complexity_score, complexity_score_scalar};
 pub use gc_content::{gc_content, gc_content_scalar};
+pub use pattern_match::{count_pattern, find_all_patterns, find_pattern, find_patterns, has_pattern};
 pub use quality_filter::{mean_quality, mean_quality_scalar, passes_quality_filter};
 
 // Sequence manipulation primitives
