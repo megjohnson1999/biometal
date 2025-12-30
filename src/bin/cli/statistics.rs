@@ -128,8 +128,28 @@ pub fn count_bases(args: &[String]) {
             }
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin
+            use std::io::{self, BufRead, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            for record_result in stream {
+                match record_result {
+                    Ok(record) => {
+                        let counts = count_bases(&record.sequence);
+                        total_a += counts[0] as u64;
+                        total_t += counts[1] as u64;
+                        total_g += counts[2] as u64;
+                        total_c += counts[3] as u64;
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
         }
     }
 
@@ -260,9 +280,12 @@ pub fn gc_content(args: &[String]) {
                             match record_result {
                                 Ok(record) => {
                                     let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                                    let bases = record.sequence.len() as u64;
-                                    total_gc_bases += gc_fraction * bases as f64;
-                                    total_bases += bases;
+                                    // Count only valid ACGT bases to match count_bases behavior
+                                    let acgt_bases = record.sequence.iter()
+                                        .filter(|&&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+                                        .count() as u64;
+                                    total_gc_bases += gc_fraction * acgt_bases as f64;
+                                    total_bases += acgt_bases;
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTA record: {}", e);
@@ -284,9 +307,12 @@ pub fn gc_content(args: &[String]) {
                             match record_result {
                                 Ok(record) => {
                                     let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                                    let bases = record.sequence.len() as u64;
-                                    total_gc_bases += gc_fraction * bases as f64;
-                                    total_bases += bases;
+                                    // Count only valid ACGT bases to match count_bases behavior
+                                    let acgt_bases = record.sequence.iter()
+                                        .filter(|&&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+                                        .count() as u64;
+                                    total_gc_bases += gc_fraction * acgt_bases as f64;
+                                    total_bases += acgt_bases;
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTQ record: {}", e);
@@ -303,8 +329,30 @@ pub fn gc_content(args: &[String]) {
             }
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin
+            use std::io::{self, BufRead, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            for record_result in stream {
+                match record_result {
+                    Ok(record) => {
+                        let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
+                        // Count only valid ACGT bases to match count_bases behavior
+                        let acgt_bases = record.sequence.iter()
+                            .filter(|&&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+                            .count() as u64;
+                        total_gc_bases += gc_fraction * acgt_bases as f64;
+                        total_bases += acgt_bases;
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
         }
     }
 
@@ -410,8 +458,26 @@ pub fn mean_quality(args: &[String]) {
             }
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin
+            use std::io::{self, BufRead, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            for record_result in stream {
+                match record_result {
+                    Ok(record) => {
+                        let mean_q = mean_quality(&record.quality);
+                        total_quality += mean_q;
+                        total_reads += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
         }
     }
 
@@ -554,8 +620,32 @@ pub fn complexity_score(args: &[String]) {
             }
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin (defaults to FASTQ format)
+            use std::io::{self, BufRead, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            for record_result in stream {
+                match record_result {
+                    Ok(record) => {
+                        let complexity = complexity_score(&record.sequence);
+                        total_complexity += complexity;
+                        total_sequences += 1;
+
+                        if let Some(thresh) = threshold {
+                            if complexity >= thresh {
+                                passed_threshold += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
         }
     }
 

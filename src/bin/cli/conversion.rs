@@ -111,8 +111,34 @@ pub fn fastq_to_fasta(args: &[String]) {
             }
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin (FASTQ format)
+            use std::io::{self, BufRead, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            for record_result in stream {
+                match record_result {
+                    Ok(fastq_record) => {
+                        let fasta_record = to_fasta_record(&fastq_record);
+
+                        // Write FASTA format
+                        if writeln!(output, ">{}", fasta_record.id).is_err() {
+                            eprintln!("Error writing to output");
+                            process::exit(1);
+                        }
+                        if writeln!(output, "{}", String::from_utf8_lossy(&fasta_record.sequence)).is_err() {
+                            eprintln!("Error writing to output");
+                            process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
         }
     }
 }
@@ -237,8 +263,25 @@ pub fn count_reads(args: &[String]) {
             println!("{} reads in {} (format: {})", read_count, file_path, detected_format);
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin (defaults to FASTQ format)
+            use std::io::{self, BufRead, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            for record_result in stream {
+                match record_result {
+                    Ok(_) => read_count += 1,
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+
+            // Output result
+            println!("{} reads from stdin (format: fastq)", read_count);
         }
     }
 }
