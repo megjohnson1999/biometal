@@ -280,12 +280,9 @@ pub fn gc_content(args: &[String]) {
                             match record_result {
                                 Ok(record) => {
                                     let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                                    // Count only valid ACGT bases to match count_bases behavior
-                                    let acgt_bases = record.sequence.iter()
-                                        .filter(|&&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
-                                        .count() as u64;
-                                    total_gc_bases += gc_fraction * acgt_bases as f64;
-                                    total_bases += acgt_bases;
+                                    let bases = record.sequence.len() as u64;
+                                    total_gc_bases += gc_fraction * bases as f64;
+                                    total_bases += bases;
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTA record: {}", e);
@@ -307,12 +304,9 @@ pub fn gc_content(args: &[String]) {
                             match record_result {
                                 Ok(record) => {
                                     let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                                    // Count only valid ACGT bases to match count_bases behavior
-                                    let acgt_bases = record.sequence.iter()
-                                        .filter(|&&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
-                                        .count() as u64;
-                                    total_gc_bases += gc_fraction * acgt_bases as f64;
-                                    total_bases += acgt_bases;
+                                    let bases = record.sequence.len() as u64;
+                                    total_gc_bases += gc_fraction * bases as f64;
+                                    total_bases += bases;
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTQ record: {}", e);
@@ -340,12 +334,9 @@ pub fn gc_content(args: &[String]) {
                 match record_result {
                     Ok(record) => {
                         let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                        // Count only valid ACGT bases to match count_bases behavior
-                        let acgt_bases = record.sequence.iter()
-                            .filter(|&&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
-                            .count() as u64;
-                        total_gc_bases += gc_fraction * acgt_bases as f64;
-                        total_bases += acgt_bases;
+                        let bases = record.sequence.len() as u64;
+                        total_gc_bases += gc_fraction * bases as f64;
+                        total_bases += bases;
                     }
                     Err(e) => {
                         eprintln!("Error reading FASTQ record from stdin: {}", e);
