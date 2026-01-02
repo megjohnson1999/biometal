@@ -441,6 +441,41 @@ mod tests {
         assert_eq!(count_masked_bases(&record), 1);
     }
 
+    #[test]
+    fn test_mask_mixed_case_validation() {
+        // Test masking behavior with mixed case sequences
+
+        // Test case 1: Mixed case with low quality
+        let mut record1 = FastqRecord::new(
+            "test1".to_string(),
+            b"ATCGatcg".to_vec(),
+            b"IIII!!!!".to_vec(), // Q40 then Q0
+        );
+        mask_low_quality(&mut record1, 20).unwrap();
+        assert_eq!(record1.sequence, b"ATCGNNNN");
+        println!("Mixed case masking: ATCGatcg -> {}", String::from_utf8_lossy(&record1.sequence));
+
+        // Test case 2: All lowercase with mixed quality
+        let mut record2 = FastqRecord::new(
+            "test2".to_string(),
+            b"atcgatcg".to_vec(),
+            b"II!!II!!".to_vec(), // Alternating Q40/Q0
+        );
+        mask_low_quality(&mut record2, 20).unwrap();
+        assert_eq!(record2.sequence, b"atNNatNN");
+        println!("Lowercase masking: atcgatcg -> {}", String::from_utf8_lossy(&record2.sequence));
+
+        // Test case 3: All uppercase, no masking needed
+        let mut record3 = FastqRecord::new(
+            "test3".to_string(),
+            b"ATCGATCG".to_vec(),
+            b"IIIIIIII".to_vec(), // All Q40
+        );
+        mask_low_quality(&mut record3, 20).unwrap();
+        assert_eq!(record3.sequence, b"ATCGATCG");
+        println!("No masking needed: ATCGATCG -> {}", String::from_utf8_lossy(&record3.sequence));
+    }
+
     // ===== Property-Based Tests =====
 
     #[cfg(test)]

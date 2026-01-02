@@ -789,6 +789,49 @@ mod tests {
         assert!(trim_start(&record, 1).is_ok());
     }
 
+    #[test]
+    fn test_trimming_case_sensitivity_validation() {
+        // Validate that trimming preserves original case correctly
+
+        // Test 1: Mixed case with quality trim
+        let mut record1 = FastqRecord::new(
+            "test1".to_string(),
+            b"ATCGatcg".to_vec(),
+            b"IIII!!!!".to_vec(), // Q40 then Q0
+        );
+        let trimmed1 = trim_quality_end(&record1, 20).unwrap();
+        assert_eq!(trimmed1.sequence, b"ATCG"); // Should preserve original case
+        println!("Quality trim: ATCGatcg -> {}", String::from_utf8_lossy(&trimmed1.sequence));
+
+        // Test 2: All lowercase with quality trim
+        let mut record2 = FastqRecord::new(
+            "test2".to_string(),
+            b"atcgatcg".to_vec(),
+            b"II!!II!!".to_vec(), // Alternating Q40/Q0
+        );
+        let trimmed2 = trim_quality_end(&record2, 20).unwrap();
+        assert_eq!(trimmed2.sequence, b"atcgat"); // Should preserve lowercase
+        println!("Quality trim lowercase: atcgatcg -> {}", String::from_utf8_lossy(&trimmed2.sequence));
+
+        // Test 3: Mixed case with fixed trim
+        let mut record3 = FastqRecord::new(
+            "test3".to_string(),
+            b"ATCGatcg".to_vec(),
+            b"IIIIIIII".to_vec(), // All high quality
+        );
+        let trimmed3 = trim_end(&record3, 3).unwrap();
+        assert_eq!(trimmed3.sequence, b"ATCGa"); // Should preserve mixed case
+        println!("Fixed trim: ATCGatcg -> {}", String::from_utf8_lossy(&trimmed3.sequence));
+
+        // Verify case preservation explicitly
+        let original = "ATCGatcg";
+        let result = String::from_utf8_lossy(&trimmed3.sequence);
+        for (i, (orig, res)) in original.chars().zip(result.chars()).enumerate() {
+            assert_eq!(orig.is_uppercase(), res.is_uppercase(),
+                "Case mismatch at position {}: {} vs {}", i, orig, res);
+        }
+    }
+
     // ===== Property-Based Tests =====
 
     #[cfg(test)]

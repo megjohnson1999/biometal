@@ -619,9 +619,10 @@ pub fn kmer_spectrum(sequences: &[&[u8]], k: usize) -> HashMap<Vec<u8>, usize> {
     counts
 }
 
-/// Check if k-mer contains only valid bases (A, C, G, T)
+/// Check if k-mer contains only valid bases (A, C, G, T, case-insensitive)
 ///
 /// Returns false if k-mer contains N or other ambiguous bases.
+/// Accepts both uppercase and lowercase bases for consistency with other operations.
 ///
 /// # Performance
 ///
@@ -630,7 +631,7 @@ pub fn kmer_spectrum(sequences: &[&[u8]], k: usize) -> HashMap<Vec<u8>, usize> {
 /// overall speedup would be ~1× (negligible).
 #[inline]
 fn is_valid_kmer(kmer: &[u8]) -> bool {
-    kmer.iter().all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+    kmer.iter().all(|&b| matches!(b, b'A' | b'a' | b'C' | b'c' | b'G' | b'g' | b'T' | b't'))
 }
 
 /// FNV-1a hash function (64-bit)
@@ -1285,16 +1286,30 @@ mod tests {
 
     #[test]
     fn test_is_valid_kmer() {
+        // Uppercase bases should be valid
         assert!(is_valid_kmer(b"ATGC"));
         assert!(is_valid_kmer(b"AAAA"));
         assert!(is_valid_kmer(b"CCCC"));
         assert!(is_valid_kmer(b"GGGG"));
         assert!(is_valid_kmer(b"TTTT"));
 
+        // Lowercase bases should be valid (case-insensitive)
+        assert!(is_valid_kmer(b"atgc"));
+        assert!(is_valid_kmer(b"aaaa"));
+        assert!(is_valid_kmer(b"cccc"));
+        assert!(is_valid_kmer(b"gggg"));
+        assert!(is_valid_kmer(b"tttt"));
+
+        // Mixed case should be valid
+        assert!(is_valid_kmer(b"ATgc"));
+        assert!(is_valid_kmer(b"AaTt"));
+        assert!(is_valid_kmer(b"CcGg"));
+
+        // N and other ambiguous bases should not be valid
         assert!(!is_valid_kmer(b"ATGN"));
         assert!(!is_valid_kmer(b"NATG"));
         assert!(!is_valid_kmer(b"ATXG"));
-        assert!(!is_valid_kmer(b"atgc")); // Lowercase not valid
+        assert!(!is_valid_kmer(b"atgn")); // Lowercase N still invalid
     }
 
     // ===== Hash Function Tests =====
@@ -1485,6 +1500,7 @@ mod tests {
         // Verify correctness
         assert_eq!(scalar_kmers.len(), parallel_kmers.len());
     }
+
 
     // ===== Property-Based Tests =====
 

@@ -285,4 +285,44 @@ mod tests {
         assert!(complexity_score(b"ACGTACGTACGTACGT") > 0.95);
         assert!(complexity_score(b"ACGTACGTACGTACGTACGT") > 0.95);
     }
+
+    #[test]
+    fn test_complexity_case_sensitivity_validation() {
+        // Test that complexity calculation handles case correctly after base_counting fix
+
+        // Test 1: Mixed case should give same result as uppercase
+        let mixed_case = b"ATCGatcg";
+        let upper_case = b"ATCGATCG";
+
+        let mixed_complexity = complexity_score(mixed_case);
+        let upper_complexity = complexity_score(upper_case);
+
+        println!("Mixed case complexity: ATCGatcg -> {:.6}", mixed_complexity);
+        println!("Upper case complexity: ATCGATCG -> {:.6}", upper_complexity);
+
+        // Should be equal (within floating point precision)
+        assert!((mixed_complexity - upper_complexity).abs() < 0.000001);
+
+        // Test 2: All lowercase should work correctly
+        let lower_case = b"atcgatcg";
+        let lower_complexity = complexity_score(lower_case);
+
+        println!("Lower case complexity: atcgatcg -> {:.6}", lower_complexity);
+        assert!((lower_complexity - upper_complexity).abs() < 0.000001);
+
+        // Test 3: Mixed case homopolymer
+        let mixed_homo = b"AAAaaaa";
+        let upper_homo = b"AAAAAAAA";
+
+        let mixed_homo_complexity = complexity_score(mixed_homo);
+        let upper_homo_complexity = complexity_score(upper_homo);
+
+        println!("Mixed homopolymer: AAAaaaa -> {:.6}", mixed_homo_complexity);
+        println!("Upper homopolymer: AAAAAAAA -> {:.6}", upper_homo_complexity);
+
+        // Should both be low complexity (near 0)
+        assert!(mixed_homo_complexity < 0.1);
+        assert!(upper_homo_complexity < 0.1);
+        assert!((mixed_homo_complexity - upper_homo_complexity).abs() < 0.000001);
+    }
 }

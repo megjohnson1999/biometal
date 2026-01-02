@@ -20,6 +20,33 @@
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
 
+/// Convert ASCII byte to uppercase (for case-insensitive comparison)
+///
+/// This is faster than std library functions for our specific use case
+/// where we only care about A-Z/a-z conversion.
+#[inline]
+fn to_uppercase_ascii(byte: u8) -> u8 {
+    if byte >= b'a' && byte <= b'z' {
+        byte - 32  // Convert lowercase to uppercase
+    } else {
+        byte
+    }
+}
+
+/// Case-insensitive sequence comparison
+///
+/// Compares two byte slices in a case-insensitive manner for genomic sequences.
+/// This handles the common case where sequences might be soft-masked (mixed case).
+fn sequences_equal_ignore_case(seq1: &[u8], seq2: &[u8]) -> bool {
+    if seq1.len() != seq2.len() {
+        return false;
+    }
+
+    seq1.iter().zip(seq2.iter()).all(|(&a, &b)| {
+        to_uppercase_ascii(a) == to_uppercase_ascii(b)
+    })
+}
+
 /// Find first occurrence of needle in haystack
 ///
 /// # Arguments
@@ -54,18 +81,9 @@ pub fn find_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     for i in 0..=haystack.len() - needle.len() {
         let subseq = &haystack[i..i + needle.len()];
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            if compare_sequences_neon(subseq, needle) {
-                return Some(i);
-            }
-        }
-
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            if subseq == needle {
-                return Some(i);
-            }
+        // Use case-insensitive comparison for both ARM and x86_64
+        if sequences_equal_ignore_case(subseq, needle) {
+            return Some(i);
         }
     }
 
@@ -92,18 +110,9 @@ pub fn find_all_patterns(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
     for i in 0..=haystack.len() - needle.len() {
         let subseq = &haystack[i..i + needle.len()];
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            if compare_sequences_neon(subseq, needle) {
-                matches.push(i);
-            }
-        }
-
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            if subseq == needle {
-                matches.push(i);
-            }
+        // Use case-insensitive comparison for both ARM and x86_64
+        if sequences_equal_ignore_case(subseq, needle) {
+            matches.push(i);
         }
     }
 
@@ -130,18 +139,9 @@ pub fn count_pattern(haystack: &[u8], needle: &[u8]) -> u64 {
     for i in 0..=haystack.len() - needle.len() {
         let subseq = &haystack[i..i + needle.len()];
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            if compare_sequences_neon(subseq, needle) {
-                count += 1;
-            }
-        }
-
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            if subseq == needle {
-                count += 1;
-            }
+        // Use case-insensitive comparison for both ARM and x86_64
+        if sequences_equal_ignore_case(subseq, needle) {
+            count += 1;
         }
     }
 
@@ -193,20 +193,10 @@ pub fn find_patterns(haystack: &[u8], needles: &[&[u8]]) -> Vec<(usize, usize)> 
             if needle.len() <= remaining.len() {
                 let subseq = &remaining[..needle.len()];
 
-                #[cfg(target_arch = "aarch64")]
-                {
-                    if compare_sequences_neon(subseq, needle) {
-                        matches.push((i, pattern_idx));
-                        break; // Only report first match at each position
-                    }
-                }
-
-                #[cfg(not(target_arch = "aarch64"))]
-                {
-                    if subseq == needle {
-                        matches.push((i, pattern_idx));
-                        break; // Only report first match at each position
-                    }
+                // Use case-insensitive comparison for both ARM and x86_64
+                if sequences_equal_ignore_case(subseq, needle) {
+                    matches.push((i, pattern_idx));
+                    break; // Only report first match at each position
                 }
             }
         }
@@ -315,7 +305,7 @@ mod tests {
     fn test_find_pattern_basic() {
         let sequence = b"GATTACAAGATCGGAAGAGCGTCGT";
         let pattern = b"AGATCGGAAGAGC";
-        assert_eq!(find_pattern(sequence, pattern), Some(8));
+        assert_eq!(find_pattern(sequence, pattern), Some(7));
     }
 
     #[test]
@@ -330,14 +320,50 @@ mod tests {
         let sequence = b"ATCGATCGATCG";
         let pattern = b"ATC";
         let matches = find_all_patterns(sequence, pattern);
-        assert_eq!(matches, vec![0, 3, 6, 9]);
+        assert_eq!(matches, vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn test_pattern_match_case_sensitivity_bug() {
+        // Test to reveal case sensitivity bug in pattern matching
+
+        // Test 1: Mixed case sequence and uppercase pattern
+        let mixed_seq = b"ATCGatcgGGGG";
+        let upper_pattern = b"ATCG";
+
+        let mixed_results = find_all_patterns(mixed_seq, upper_pattern);
+        println!("Mixed sequence with upper pattern: {:?}", mixed_results);
+
+        // Bug: Should find "ATCG" at position 0, but will it find "atcg" at position 4?
+        // Expected behavior: Should find both at positions 0 and 4
+        // Current buggy behavior: Likely only finds position 0
+
+        // Test 2: Lowercase pattern in mixed sequence
+        let lower_pattern = b"atcg";
+        let mixed_results_lower = find_all_patterns(mixed_seq, lower_pattern);
+        println!("Mixed sequence with lower pattern: {:?}", mixed_results_lower);
+
+        // Bug: Should find "atcg" at position 4, but will it find "ATCG" at position 0?
+        // Expected behavior: Should find both at positions 0 and 4
+        // Current buggy behavior: Likely only finds position 4
+
+        // Test 3: All uppercase sequence
+        let upper_seq = b"ATCGATCGGGGG";
+        let upper_results_upper = find_all_patterns(upper_seq, upper_pattern);
+        let upper_results_lower = find_all_patterns(upper_seq, lower_pattern);
+
+        println!("Upper sequence with upper pattern: {:?}", upper_results_upper);
+        println!("Upper sequence with lower pattern: {:?}", upper_results_lower);
+
+        // This test reveals the case sensitivity bug - patterns should match regardless of case
+        // but currently they don't
     }
 
     #[test]
     fn test_count_pattern() {
         let sequence = b"ATCGATCGATCG";
         let pattern = b"ATC";
-        assert_eq!(count_pattern(sequence, pattern), 4);
+        assert_eq!(count_pattern(sequence, pattern), 3);
     }
 
     #[test]

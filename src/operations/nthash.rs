@@ -52,11 +52,18 @@ pub const MAX_K_SIZE: usize = u32::MAX as usize;
 /// These values are chosen to provide good hash distribution.
 const H_LOOKUP: [u64; 256] = {
     let mut lookup = [0; 256];
+    // Uppercase nucleotides
     lookup[b'A' as usize] = 0x3c8b_fbb3_95c6_0474;
     lookup[b'C' as usize] = 0x3193_c185_62a0_2b4c;
     lookup[b'G' as usize] = 0x2032_3ed0_8257_2324;
     lookup[b'T' as usize] = 0x2955_49f5_4be2_4456;
     lookup[b'N' as usize] = 0;
+    // Lowercase nucleotides (case-insensitive mapping)
+    lookup[b'a' as usize] = 0x3c8b_fbb3_95c6_0474; // Same as 'A'
+    lookup[b'c' as usize] = 0x3193_c185_62a0_2b4c; // Same as 'C'
+    lookup[b'g' as usize] = 0x2032_3ed0_8257_2324; // Same as 'G'
+    lookup[b't' as usize] = 0x2955_49f5_4be2_4456; // Same as 'T'
+    lookup[b'n' as usize] = 0; // Same as 'N'
     // All other indices remain 0 (invalid)
     lookup
 };
@@ -67,11 +74,18 @@ const H_LOOKUP: [u64; 256] = {
 /// A ↔ T, C ↔ G
 const RC_LOOKUP: [u64; 256] = {
     let mut lookup = [0; 256];
+    // Uppercase nucleotides (reverse complement mapping)
     lookup[b'A' as usize] = 0x2955_49f5_4be2_4456; // T's value
     lookup[b'C' as usize] = 0x2032_3ed0_8257_2324; // G's value
     lookup[b'G' as usize] = 0x3193_c185_62a0_2b4c; // C's value
     lookup[b'T' as usize] = 0x3c8b_fbb3_95c6_0474; // A's value
     lookup[b'N' as usize] = 0;
+    // Lowercase nucleotides (case-insensitive reverse complement mapping)
+    lookup[b'a' as usize] = 0x2955_49f5_4be2_4456; // t's value (same as 'A' -> 'T')
+    lookup[b'c' as usize] = 0x2032_3ed0_8257_2324; // g's value (same as 'C' -> 'G')
+    lookup[b'g' as usize] = 0x3193_c185_62a0_2b4c; // c's value (same as 'G' -> 'C')
+    lookup[b't' as usize] = 0x3c8b_fbb3_95c6_0474; // a's value (same as 'T' -> 'A')
+    lookup[b'n' as usize] = 0; // Same as 'N'
     // All other indices remain 0 (invalid)
     lookup
 };
@@ -535,5 +549,48 @@ mod tests {
 
         assert_eq!(iter.len(), 6); // 10 - 5 + 1 = 6 k-mers
         assert_eq!(iter.size_hint(), (6, Some(6)));
+    }
+
+    #[test]
+    fn test_nthash_case_sensitivity_fix() {
+        // Test that ntHash now handles both uppercase and lowercase correctly
+
+        let upper_seq = b"ATCG";
+        let lower_seq = b"atcg";
+        let mixed_seq = b"ATcg";
+
+        let k = 4;
+
+        // All sequences should produce the same forward hash
+        let upper_hash = forward_hash(upper_seq, k).unwrap();
+        let lower_hash = forward_hash(lower_seq, k).unwrap();
+        let mixed_hash = forward_hash(mixed_seq, k).unwrap();
+
+        println!("Upper hash: 0x{:016x}", upper_hash);
+        println!("Lower hash: 0x{:016x}", lower_hash);
+        println!("Mixed hash: 0x{:016x}", mixed_hash);
+
+        assert_eq!(upper_hash, lower_hash, "Upper and lower case should produce same hash");
+        assert_eq!(upper_hash, mixed_hash, "Mixed case should produce same hash");
+
+        // All sequences should produce the same reverse complement hash
+        let upper_rc_hash = reverse_complement_hash(upper_seq, k).unwrap();
+        let lower_rc_hash = reverse_complement_hash(lower_seq, k).unwrap();
+        let mixed_rc_hash = reverse_complement_hash(mixed_seq, k).unwrap();
+
+        println!("Upper RC hash: 0x{:016x}", upper_rc_hash);
+        println!("Lower RC hash: 0x{:016x}", lower_rc_hash);
+        println!("Mixed RC hash: 0x{:016x}", mixed_rc_hash);
+
+        assert_eq!(upper_rc_hash, lower_rc_hash, "Upper and lower case should produce same RC hash");
+        assert_eq!(upper_rc_hash, mixed_rc_hash, "Mixed case should produce same RC hash");
+
+        // Test that canonical hash (minimum of forward and RC) also works
+        let upper_canonical = std::cmp::min(upper_hash, upper_rc_hash);
+        let lower_canonical = std::cmp::min(lower_hash, lower_rc_hash);
+        let mixed_canonical = std::cmp::min(mixed_hash, mixed_rc_hash);
+
+        assert_eq!(upper_canonical, lower_canonical, "Canonical hashes should be equal");
+        assert_eq!(upper_canonical, mixed_canonical, "Canonical hashes should be equal");
     }
 }
