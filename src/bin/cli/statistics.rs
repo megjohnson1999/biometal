@@ -83,10 +83,10 @@ pub fn count_bases(args: &[String]) {
                             match record_result {
                                 Ok(record) => {
                                     let counts = count_bases(&record.sequence);
-                                    total_a += counts[0] as u64;
-                                    total_t += counts[1] as u64;
-                                    total_g += counts[2] as u64;
-                                    total_c += counts[3] as u64;
+                                    total_a += counts[0] as u64;  // A
+                                    total_c += counts[1] as u64;  // C (was incorrectly T)
+                                    total_g += counts[2] as u64;  // G
+                                    total_t += counts[3] as u64;  // T (was incorrectly C)
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTA record: {}", e);
@@ -108,10 +108,10 @@ pub fn count_bases(args: &[String]) {
                             match record_result {
                                 Ok(record) => {
                                     let counts = count_bases(&record.sequence);
-                                    total_a += counts[0] as u64;
-                                    total_t += counts[1] as u64;
-                                    total_g += counts[2] as u64;
-                                    total_c += counts[3] as u64;
+                                    total_a += counts[0] as u64;  // A
+                                    total_c += counts[1] as u64;  // C (was incorrectly T)
+                                    total_g += counts[2] as u64;  // G
+                                    total_t += counts[3] as u64;  // T (was incorrectly C)
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTQ record: {}", e);
@@ -139,10 +139,10 @@ pub fn count_bases(args: &[String]) {
                 match record_result {
                     Ok(record) => {
                         let counts = count_bases(&record.sequence);
-                        total_a += counts[0] as u64;
-                        total_t += counts[1] as u64;
-                        total_g += counts[2] as u64;
-                        total_c += counts[3] as u64;
+                        total_a += counts[0] as u64;  // A
+                        total_c += counts[1] as u64;  // C (was incorrectly T)
+                        total_g += counts[2] as u64;  // G
+                        total_t += counts[3] as u64;  // T (was incorrectly C)
                     }
                     Err(e) => {
                         eprintln!("Error reading FASTQ record from stdin: {}", e);
@@ -279,10 +279,13 @@ pub fn gc_content(args: &[String]) {
                         for record_result in stream {
                             match record_result {
                                 Ok(record) => {
-                                    let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                                    let bases = record.sequence.len() as u64;
-                                    total_gc_bases += gc_fraction * bases as f64;
-                                    total_bases += bases;
+                                    // Use the library GC content function (now case-insensitive)
+                                    let record_gc_content = gc_content(&record.sequence);
+                                    let base_counts = biometal::operations::count_bases(&record.sequence);
+                                    let record_acgt = base_counts[0] + base_counts[1] + base_counts[2] + base_counts[3];
+
+                                    total_gc_bases += (record_gc_content * record_acgt as f64);
+                                    total_bases += record_acgt as u64;
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTA record: {}", e);
@@ -303,10 +306,13 @@ pub fn gc_content(args: &[String]) {
                         for record_result in stream {
                             match record_result {
                                 Ok(record) => {
-                                    let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                                    let bases = record.sequence.len() as u64;
-                                    total_gc_bases += gc_fraction * bases as f64;
-                                    total_bases += bases;
+                                    // Use the library GC content function (now case-insensitive)
+                                    let record_gc_content = gc_content(&record.sequence);
+                                    let base_counts = biometal::operations::count_bases(&record.sequence);
+                                    let record_acgt = base_counts[0] + base_counts[1] + base_counts[2] + base_counts[3];
+
+                                    total_gc_bases += (record_gc_content * record_acgt as f64);
+                                    total_bases += record_acgt as u64;
                                 }
                                 Err(e) => {
                                     eprintln!("Error reading FASTQ record: {}", e);
@@ -333,10 +339,13 @@ pub fn gc_content(args: &[String]) {
             for record_result in stream {
                 match record_result {
                     Ok(record) => {
-                        let gc_fraction = gc_content(&record.sequence);  // Returns 0-1, not 0-100
-                        let bases = record.sequence.len() as u64;
-                        total_gc_bases += gc_fraction * bases as f64;
-                        total_bases += bases;
+                        // Use the library GC content function (now case-insensitive)
+                        let record_gc_content = gc_content(&record.sequence);
+                        let base_counts = biometal::operations::count_bases(&record.sequence);
+                        let record_acgt = base_counts[0] + base_counts[1] + base_counts[2] + base_counts[3];
+
+                        total_gc_bases += record_gc_content * record_acgt as f64;
+                        total_bases += record_acgt as u64;
                     }
                     Err(e) => {
                         eprintln!("Error reading FASTQ record from stdin: {}", e);

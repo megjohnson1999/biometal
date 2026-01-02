@@ -81,9 +81,14 @@ pub unsafe fn gc_content_neon(seq: &[u8]) -> GCContent {
     for chunk in chunks {
         let seq_vec = vld1q_u8(chunk.as_ptr());
 
-        // Compare against G and C
-        let g_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'G'));
-        let c_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'C'));
+        // Compare against G and C (case-insensitive: 4 NEON comparisons)
+        let g_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'G'));
+        let g_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'g'));
+        let g_mask = vorrq_u8(g_upper_mask, g_lower_mask);
+
+        let c_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'C'));
+        let c_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'c'));
+        let c_mask = vorrq_u8(c_upper_mask, c_lower_mask);
 
         // Combine G and C masks (bitwise OR)
         let gc_mask = vorrq_u8(g_mask, c_mask);
@@ -94,9 +99,14 @@ pub unsafe fn gc_content_neon(seq: &[u8]) -> GCContent {
         // Accumulate counts
         gc_vcount = vaddq_u32(gc_vcount, vpaddlq_u16(vpaddlq_u8(gc_count_u8)));
 
-        // Count all ACGT bases (not N or other ambiguous bases)
-        let a_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'A'));
-        let t_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'T'));
+        // Count all ACGT bases (case-insensitive, not N or other ambiguous bases)
+        let a_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'A'));
+        let a_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'a'));
+        let a_mask = vorrq_u8(a_upper_mask, a_lower_mask);
+
+        let t_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'T'));
+        let t_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b't'));
+        let t_mask = vorrq_u8(t_upper_mask, t_lower_mask);
 
         // Combine all ACGT masks
         let acgt_mask = vorrq_u8(vorrq_u8(a_mask, t_mask), gc_mask);
@@ -116,14 +126,14 @@ pub unsafe fn gc_content_neon(seq: &[u8]) -> GCContent {
     gc_count += vgetq_lane_u32(gc_vcount, 2);
     gc_count += vgetq_lane_u32(gc_vcount, 3);
 
-    // Handle remainder with scalar code
+    // Handle remainder with scalar code (case-insensitive)
     for &base in remainder {
         match base {
-            b'G' | b'C' => {
+            b'G' | b'g' | b'C' | b'c' => {
                 gc_count += 1;
                 total_count += 1;
             }
-            b'A' | b'T' => {
+            b'A' | b'a' | b'T' | b't' => {
                 total_count += 1;
             }
             _ => {} // Ignore non-ACGT characters
@@ -146,11 +156,11 @@ pub fn gc_content_scalar(seq: &[u8]) -> GCContent {
 
     for &base in seq {
         match base {
-            b'G' | b'C' => {
+            b'G' | b'g' | b'C' | b'c' => {
                 gc_count += 1;
                 total_count += 1;
             }
-            b'A' | b'T' => {
+            b'A' | b'a' | b'T' | b't' => {
                 total_count += 1;
             }
             _ => {} // Ignore non-ACGT characters
@@ -187,6 +197,32 @@ mod tests {
         let seq = b"ATATATA";
         let gc = gc_content(seq);
         assert!((gc - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_gc_content_mixed_case() {
+        // Test case-insensitive GC calculation (the bug fix)
+        let seq = b"GGccAAAA"; // 4 GC + 4 AT = 50% GC
+        let gc = gc_content(seq);
+        assert!((gc - 0.5).abs() < 0.001); // Should be 50%
+    }
+
+    #[test]
+    fn test_gc_content_all_lowercase() {
+        let seq = b"gcgcgcgc";
+        let gc = gc_content(seq);
+        assert!((gc - 1.0).abs() < 0.001); // Should be 100% GC
+    }
+
+    #[test]
+    fn test_gc_content_soft_masked_genome() {
+        // Realistic soft-masked genome sequence
+        let seq = b"ATCGNNNNatcgtatcgATCGNNNNatcgtatcg";
+        let gc = gc_content(seq);
+        // Total valid bases: A=6, T=8, C=6, G=6 = 26 total
+        // GC bases: C=6, G=6 = 12 total
+        // Expected GC: 12/26 = 0.461538 ≈ 46.15%
+        assert!((gc - 0.461538).abs() < 0.001);
     }
 
     #[test]

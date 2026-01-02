@@ -78,12 +78,23 @@ pub unsafe fn count_bases_neon(seq: &[u8]) -> BaseCounts {
     for chunk in chunks {
         let seq_vec = vld1q_u8(chunk.as_ptr());
 
-        // Compare against A, C, G, T (4 NEON comparisons in parallel)
+        // Compare against A, C, G, T (case-insensitive: 8 NEON comparisons in parallel)
         // Result: 0xFF for match, 0x00 for non-match
-        let a_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'A'));
-        let c_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'C'));
-        let g_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'G'));
-        let t_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'T'));
+        let a_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'A'));
+        let a_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'a'));
+        let a_mask = vorrq_u8(a_upper_mask, a_lower_mask);
+
+        let c_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'C'));
+        let c_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'c'));
+        let c_mask = vorrq_u8(c_upper_mask, c_lower_mask);
+
+        let g_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'G'));
+        let g_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'g'));
+        let g_mask = vorrq_u8(g_upper_mask, g_lower_mask);
+
+        let t_upper_mask = vceqq_u8(seq_vec, vdupq_n_u8(b'T'));
+        let t_lower_mask = vceqq_u8(seq_vec, vdupq_n_u8(b't'));
+        let t_mask = vorrq_u8(t_upper_mask, t_lower_mask);
 
         // Convert 0xFF to 0x01 by shifting right 7 bits
         // This converts mask (0xFF = match, 0x00 = no match) to count (0x01 or 0x00)
@@ -109,13 +120,13 @@ pub unsafe fn count_bases_neon(seq: &[u8]) -> BaseCounts {
             + vgetq_lane_u32(vcounts[i], 3);
     }
 
-    // Handle remainder with scalar code
+    // Handle remainder with scalar code (case-insensitive)
     for &base in remainder {
         match base {
-            b'A' => counts[0] += 1,
-            b'C' => counts[1] += 1,
-            b'G' => counts[2] += 1,
-            b'T' => counts[3] += 1,
+            b'A' | b'a' => counts[0] += 1,
+            b'C' | b'c' => counts[1] += 1,
+            b'G' | b'g' => counts[2] += 1,
+            b'T' | b't' => counts[3] += 1,
             _ => {} // Ignore non-ACGT characters
         }
     }
@@ -131,10 +142,10 @@ pub fn count_bases_scalar(seq: &[u8]) -> BaseCounts {
 
     for &base in seq {
         match base {
-            b'A' => counts[0] += 1,
-            b'C' => counts[1] += 1,
-            b'G' => counts[2] += 1,
-            b'T' => counts[3] += 1,
+            b'A' | b'a' => counts[0] += 1,
+            b'C' | b'c' => counts[1] += 1,
+            b'G' | b'g' => counts[2] += 1,
+            b'T' | b't' => counts[3] += 1,
             _ => {} // Ignore non-ACGT characters
         }
     }
@@ -166,6 +177,30 @@ mod tests {
         let counts = count_bases(seq);
         // G=1, A=3, T=1, N=2(ignored), C=1, A=1(counted), N=1(ignored)
         assert_eq!(counts, [3, 1, 1, 1]); // A=3, C=1, G=1, T=1
+    }
+
+    #[test]
+    fn test_count_bases_mixed_case() {
+        // Test case-insensitive counting (the bug fix)
+        let seq = b"AAAAaaaaTTTTtttt"; // 4A + 4a + 4T + 4t = 8A, 8T
+        let counts = count_bases(seq);
+        assert_eq!(counts, [8, 0, 0, 8]); // A=8, C=0, G=0, T=8
+    }
+
+    #[test]
+    fn test_count_bases_soft_masked_genome() {
+        // Realistic soft-masked genome sequence
+        let seq = b"ATCGNNNNatcgtatcgATCGNNNNatcgtatcg";
+        let counts = count_bases(seq);
+        // Expected: A=6, T=8, C=6, G=6 (case-insensitive, N ignored)
+        assert_eq!(counts, [6, 6, 6, 8]); // A=6, C=6, G=6, T=8
+    }
+
+    #[test]
+    fn test_count_bases_all_lowercase() {
+        let seq = b"gattaca"; // All lowercase
+        let counts = count_bases(seq);
+        assert_eq!(counts, [3, 1, 1, 2]); // a=3, c=1, g=1, t=2
     }
 
     #[test]
@@ -217,8 +252,9 @@ mod tests {
 
         proptest! {
             #[test]
-            fn test_neon_matches_scalar_proptest(seq in "[ACGTN]{0,1000}") {
+            fn test_neon_matches_scalar_proptest(seq in "[ACGTNacgtn]{0,1000}") {
                 // Property: NEON and scalar implementations must produce identical results
+                // NOW INCLUDES LOWERCASE for case-insensitive testing
                 let neon_result = unsafe { count_bases_neon(seq.as_bytes()) };
                 let scalar_result = count_bases_scalar(seq.as_bytes());
                 prop_assert_eq!(
@@ -230,16 +266,18 @@ mod tests {
             }
 
             #[test]
-            fn test_count_bases_sum_equals_length(seq in "[ACGT]{0,1000}") {
-                // Property: Total count should equal sequence length (excluding N)
+            fn test_count_bases_sum_equals_length(seq in "[ACGTacgt]{0,1000}") {
+                // Property: Total count should equal sequence length (case-insensitive, excluding N)
+                // NOW INCLUDES LOWERCASE for case-insensitive testing
                 let counts = count_bases(seq.as_bytes());
                 let total: u32 = counts.iter().sum();
                 prop_assert_eq!(total, seq.len() as u32, "Total count should equal sequence length");
             }
 
             #[test]
-            fn test_count_bases_monotonicity(seq in "[ACGT]{0,100}") {
+            fn test_count_bases_monotonicity(seq in "[ACGTacgt]{0,100}") {
                 // Property: Adding more bases should increase counts
+                // NOW INCLUDES LOWERCASE for case-insensitive testing
                 let counts1 = count_bases(seq.as_bytes());
                 let extended = format!("{}AAAA", seq);
                 let counts2 = count_bases(extended.as_bytes());
