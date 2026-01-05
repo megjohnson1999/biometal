@@ -42,3 +42,31 @@ env/
 # External dependencies (to prevent nested git repos)
 experiments/*/external/
 **/external/*/.git/
+
+# Planning and session documents (temporary, not for version control)
+*_PLAN.md
+*_PLANNING*.md
+*_STATUS.md
+*_FINDINGS.md
+*_RESULTS.md
+*_INVESTIGATION.md
+*_ANALYSIS.md
+*_IMPLEMENTATION.md
+*_PROGRESS*.md
+*_SUMMARY.md
+*_REPORT.md
+*_TESTING.md
+PROJECT_TODOS.md
+PLANNING_INDEX.md
+SESSION_*.md
+PHASE*_*.md
+STRATEGIC_*.md
+PROPERTY_BASED_TESTING.md
+KNOWN_ISSUES.md
+GPU_ML_ANALYSIS.md
+NATIVE_CRAM_*.md
+CRAM_*_PHASE*.md
+BAM_WRITER_*.md
+FILE_OPERATIONS_*.md
+FORMAT_COVERAGE_*.md
+CLI_VALIDATION_REPORT.md

@@ -103,6 +103,21 @@ impl FastqStream<CompressedReader> {
         let source = DataSource::from_path(path);
         Self::new(source)
     }
+
+    /// Create a FASTQ stream from a file path with forced streaming I/O
+    ///
+    /// This method always uses standard I/O streaming regardless of file size,
+    /// providing constant ~8-10MB memory usage. Ideal for sequential operations
+    /// like count-bases, gc-content, mean-quality, etc.
+    ///
+    /// # Performance
+    /// - Memory: ~8-10MB constant (perfect for democratization goal)
+    /// - Speed: Optimal for sequential access patterns
+    /// - Use case: CLI commands and sequential processing
+    pub fn from_path_streaming<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let source = DataSource::from_path_streaming(path);
+        Self::new(source)
+    }
 }
 
 impl<R: BufRead> FastqStream<R> {

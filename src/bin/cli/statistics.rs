@@ -3,7 +3,6 @@
 //! These commands provide 16.7-25.1× speedup on ARM64 platforms through SIMD acceleration.
 //! All commands support comprehensive I/O: files, stdin/stdout, HTTP/HTTPS URLs, SRA accessions.
 
-use std::env;
 use std::process;
 
 /// Count base frequencies (A/T/G/C) with NEON optimization
@@ -77,7 +76,7 @@ pub fn count_bases(args: &[String]) {
             // Try to determine format from extension, default to FASTQ
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format
-                match FastaStream::from_path(file_path) {
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -102,7 +101,7 @@ pub fn count_bases(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default)
-                match FastqStream::from_path(file_path) {
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -129,7 +128,7 @@ pub fn count_bases(args: &[String]) {
         }
         None => {
             // Read from stdin
-            use std::io::{self, BufRead, BufReader};
+            use std::io::{self, BufReader};
 
             let stdin = io::stdin();
             let reader = BufReader::new(stdin.lock());
@@ -274,7 +273,7 @@ pub fn gc_content(args: &[String]) {
             // Try to determine format from extension, default to FASTQ
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format
-                match FastaStream::from_path(file_path) {
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -284,7 +283,7 @@ pub fn gc_content(args: &[String]) {
                                     let base_counts = biometal::operations::count_bases(&record.sequence);
                                     let record_acgt = base_counts[0] + base_counts[1] + base_counts[2] + base_counts[3];
 
-                                    total_gc_bases += (record_gc_content * record_acgt as f64);
+                                    total_gc_bases += record_gc_content * record_acgt as f64;
                                     total_bases += record_acgt as u64;
                                 }
                                 Err(e) => {
@@ -301,7 +300,7 @@ pub fn gc_content(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default)
-                match FastqStream::from_path(file_path) {
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -311,7 +310,7 @@ pub fn gc_content(args: &[String]) {
                                     let base_counts = biometal::operations::count_bases(&record.sequence);
                                     let record_acgt = base_counts[0] + base_counts[1] + base_counts[2] + base_counts[3];
 
-                                    total_gc_bases += (record_gc_content * record_acgt as f64);
+                                    total_gc_bases += record_gc_content * record_acgt as f64;
                                     total_bases += record_acgt as u64;
                                 }
                                 Err(e) => {
@@ -330,7 +329,7 @@ pub fn gc_content(args: &[String]) {
         }
         None => {
             // Read from stdin
-            use std::io::{self, BufRead, BufReader};
+            use std::io::{self, BufReader};
 
             let stdin = io::stdin();
             let reader = BufReader::new(stdin.lock());
@@ -435,7 +434,7 @@ pub fn mean_quality(args: &[String]) {
     match input_file {
         Some(file_path) => {
             // FASTQ only (FASTA doesn't have quality scores)
-            match FastqStream::from_path(file_path) {
+            match FastqStream::from_path_streaming(file_path) {
                 Ok(stream) => {
                     for record_result in stream {
                         match record_result {
@@ -459,7 +458,7 @@ pub fn mean_quality(args: &[String]) {
         }
         None => {
             // Read from stdin
-            use std::io::{self, BufRead, BufReader};
+            use std::io::{self, BufReader};
 
             let stdin = io::stdin();
             let reader = BufReader::new(stdin.lock());
@@ -561,7 +560,7 @@ pub fn complexity_score(args: &[String]) {
             // Try to determine format from extension, default to FASTQ
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format
-                match FastaStream::from_path(file_path) {
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -590,7 +589,7 @@ pub fn complexity_score(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default)
-                match FastqStream::from_path(file_path) {
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -621,7 +620,7 @@ pub fn complexity_score(args: &[String]) {
         }
         None => {
             // Read from stdin (defaults to FASTQ format)
-            use std::io::{self, BufRead, BufReader};
+            use std::io::{self, BufReader};
 
             let stdin = io::stdin();
             let reader = BufReader::new(stdin.lock());

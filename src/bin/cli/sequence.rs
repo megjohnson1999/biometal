@@ -3,7 +3,6 @@
 //! Essential sequence operations used in daily bioinformatics workflows.
 //! All commands support comprehensive I/O: files, stdin/stdout, HTTP/HTTPS URLs, SRA accessions.
 
-use std::env;
 use std::process;
 
 /// Generate reverse complement of DNA sequences
@@ -57,29 +56,36 @@ pub fn reverse_complement(args: &[String]) {
     // Import biometal types and operations
     use biometal::{FastqStream, FastaStream, FastqRecord, FastaRecord};
     use biometal::operations::reverse_complement;
-    use std::io::{self, Write};
-    use std::fs::File;
-
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
+    use biometal::io::FastqWriter;
+    use biometal::io::fasta::FastaWriter;
 
     match input_file {
         Some(file_path) => {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format - output FASTA
-                match FastaStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastaWriter::create(path) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastaWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -90,13 +96,9 @@ pub fn reverse_complement(args: &[String]) {
                                         sequence: rc_seq,
                                     };
 
-                                    // Write FASTA format
-                                    if writeln!(output, ">{}", rc_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&rc_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    // Use library writer
+                                    if let Err(e) = writer.write_record(&rc_record) {
+                                        eprintln!("Error writing FASTA record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -114,7 +116,28 @@ pub fn reverse_complement(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default) - output FASTQ
-                match FastqStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastqWriter::create(path) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastqWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -130,21 +153,9 @@ pub fn reverse_complement(args: &[String]) {
                                         quality: rc_qual,
                                     };
 
-                                    // Write FASTQ format
-                                    if writeln!(output, "@{}", rc_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&rc_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "+").is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&rc_record.quality)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    // Use library writer
+                                    if let Err(e) = writer.write_record(&rc_record) {
+                                        eprintln!("Error writing FASTQ record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -163,8 +174,60 @@ pub fn reverse_complement(args: &[String]) {
             }
         }
         None => {
-            eprintln!("Error: stdin input not yet implemented");
-            process::exit(1);
+            // Read from stdin (assume FASTQ format)
+            use std::io::{self, BufReader};
+
+            let stdin = io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            let stream = FastqStream::from_reader(reader);
+
+            let mut writer = match output_file {
+                Some(path) => {
+                    match FastqWriter::create(path) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating output file '{}': {}", path, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                None => {
+                    match FastqWriter::stdout() {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating stdout writer: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            };
+
+            for record_result in stream {
+                match record_result {
+                    Ok(record) => {
+                        let rc_seq = reverse_complement(&record.sequence);
+                        // Also reverse quality scores to maintain alignment
+                        let mut rc_qual = record.quality;
+                        rc_qual.reverse();
+
+                        let rc_record = FastqRecord {
+                            id: record.id,
+                            sequence: rc_seq,
+                            quality: rc_qual,
+                        };
+
+                        // Use library writer
+                        if let Err(e) = writer.write_record(&rc_record) {
+                            eprintln!("Error writing FASTQ record: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading FASTQ record from stdin: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
         }
     }
 }
@@ -218,29 +281,37 @@ pub fn complement(args: &[String]) {
     // Import biometal types and operations
     use biometal::{FastqStream, FastaStream, FastqRecord, FastaRecord};
     use biometal::operations::complement;
-    use std::io::{self, Write};
-    use std::fs::File;
-
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
+    use biometal::io::{FastqWriter, fasta::FastaWriter};
+    
+    use std::path::PathBuf;
 
     match input_file {
         Some(file_path) => {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format - output FASTA
-                match FastaStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastaWriter::create(&PathBuf::from(path)) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastaWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -251,13 +322,8 @@ pub fn complement(args: &[String]) {
                                         sequence: comp_seq,
                                     };
 
-                                    // Write FASTA format
-                                    if writeln!(output, ">{}", comp_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&comp_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    if let Err(e) = writer.write_record(&comp_record) {
+                                        eprintln!("Error writing FASTA record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -275,7 +341,28 @@ pub fn complement(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default) - output FASTQ
-                match FastqStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastqWriter::create(&PathBuf::from(path)) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastqWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -289,21 +376,8 @@ pub fn complement(args: &[String]) {
                                         quality: record.quality, // Keep original quality order
                                     };
 
-                                    // Write FASTQ format
-                                    if writeln!(output, "@{}", comp_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&comp_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "+").is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&comp_record.quality)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    if let Err(e) = writer.write_record(&comp_record) {
+                                        eprintln!("Error writing FASTQ record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -377,29 +451,37 @@ pub fn reverse(args: &[String]) {
     // Import biometal types and operations
     use biometal::{FastqStream, FastaStream, FastqRecord, FastaRecord};
     use biometal::operations::reverse;
-    use std::io::{self, Write};
-    use std::fs::File;
-
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
+    use biometal::io::{FastqWriter, fasta::FastaWriter};
+    
+    use std::path::PathBuf;
 
     match input_file {
         Some(file_path) => {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format - output FASTA
-                match FastaStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastaWriter::create(&PathBuf::from(path)) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastaWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -410,13 +492,8 @@ pub fn reverse(args: &[String]) {
                                         sequence: rev_seq,
                                     };
 
-                                    // Write FASTA format
-                                    if writeln!(output, ">{}", rev_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&rev_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    if let Err(e) = writer.write_record(&rev_record) {
+                                        eprintln!("Error writing FASTA record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -434,7 +511,28 @@ pub fn reverse(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default) - output FASTQ
-                match FastqStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastqWriter::create(&PathBuf::from(path)) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastqWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -450,21 +548,8 @@ pub fn reverse(args: &[String]) {
                                         quality: rev_qual,
                                     };
 
-                                    // Write FASTQ format
-                                    if writeln!(output, "@{}", rev_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&rev_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "+").is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&rev_record.quality)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    if let Err(e) = writer.write_record(&rev_record) {
+                                        eprintln!("Error writing FASTQ record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -545,7 +630,7 @@ pub fn validate_dna(args: &[String]) {
 
     // Import biometal types and operations
     use biometal::{FastqStream, FastaStream};
-    use biometal::operations::{is_valid_dna, count_invalid_bases};
+    use biometal::operations::count_invalid_bases;
 
     // Helper function for strict validation (only A/T/G/C allowed)
     fn is_strict_dna_base(base: u8) -> bool {
@@ -566,7 +651,7 @@ pub fn validate_dna(args: &[String]) {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format
-                match FastaStream::from_path(file_path) {
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -601,7 +686,7 @@ pub fn validate_dna(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default)
-                match FastqStream::from_path(file_path) {
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {

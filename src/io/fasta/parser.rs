@@ -101,6 +101,25 @@ impl FastaStream<CompressedReader> {
         let source = DataSource::from_path(path);
         Self::new(source)
     }
+
+    /// Create a FASTA stream from a file path with forced streaming I/O
+    ///
+    /// This method always uses standard I/O streaming regardless of file size,
+    /// providing constant ~8-10MB memory usage. Ideal for sequential operations
+    /// like count-bases, gc-content, mean-quality, etc.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use biometal::FastaStream;
+    ///
+    /// let stream = FastaStream::from_path_streaming("genome.fa.gz")?;
+    /// # Ok::<(), biometal::error::BiometalError>(())
+    /// ```
+    pub fn from_path_streaming<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let source = DataSource::from_path_streaming(path);
+        Self::new(source)
+    }
 }
 
 impl<R: BufRead> FastaStream<R> {

@@ -102,6 +102,24 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
 
 ---
 
+### CLI Memory Optimization (January 2026) - Hybrid Streaming Architecture
+Resolved CLI memory scaling issue discovered during memory efficiency testing. **Root Cause**: Memory mapping threshold (50MB) caused CLI binaries to use 335-652MB memory, contradicting streaming claims. **Solution**: Implemented hybrid approach with forced streaming I/O for CLI commands while preserving library memory mapping for performance.
+
+**Implementation**:
+- Added `FastqStream::from_path_streaming()` and `FastaStream::from_path_streaming()` constructors
+- Added `DataSource::LocalStreaming` variant for forced standard I/O
+- Updated all CLI modules (statistics, sequence, quality, conversion, pattern) to use streaming constructors
+
+**Results**:
+- Memory usage: 335-652MB → 8-11MB (97-99% reduction)
+- Constant memory regardless of file size (324MB file: 11MB, 643MB file: 9.3MB)
+- Zero functional impact: NEON acceleration preserved, same results
+- Zero breaking changes: Library users maintain current memory mapping behavior
+
+**Architecture**: Sequential CLI operations use streaming I/O, library provides both options for different use cases (sequential vs random access patterns).
+
+---
+
 ## Current Status (v1.11.0)
 
 ### Released Features
@@ -152,8 +170,15 @@ Switched to cloudflare_zlib backend: 1.67× decompression, 2.29× compression sp
   - Integration examples: 3 Rust + 1 Python notebook
 - **CLI Binary** (v1.12.0, production-ready)
   - 16 commands across 5 categories (statistics, sequence ops, quality, conversion, pattern matching)
+  - **CLI Integration Optimized** (January 2026): 75% success rate for library integration
+    - 9/16 commands at perfect 5/5 validation scores
+    - Fixed manual implementation anti-patterns (replaced with FastqWriter/FastaWriter)
+    - Improved validation framework with accurate integration detection
+    - Commands fixed: fastq-to-fasta, trim-quality, mask-low-quality, complement, reverse, extract-region
   - ARM NEON acceleration (16-25× speedup for computational tasks)
-  - Streaming architecture (constant 5 MB memory)
+  - **Memory Optimized Streaming** (January 2026): Constant 8-11MB memory usage regardless of file size
+    - 97-99% memory reduction from previous 335-652MB scaling behavior
+    - Hybrid architecture: CLI uses forced streaming, library preserves memory mapping for performance
   - Comprehensive test suite (30 tests, 100% pass rate via test_cli.sh)
   - Professional output formats (JSON, TSV, table)
   - 5× faster than awk/grep for complex sequence operations

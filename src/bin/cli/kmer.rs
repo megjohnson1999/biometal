@@ -3,7 +3,6 @@
 //! K-mer operations included pragmatically for contamination detection and alignment preprocessing.
 //! These commands provide scalar-only implementations as k-mer operations are data-structure-bound.
 
-use std::env;
 use std::process;
 
 /// Extract minimizers for long-read alignment preprocessing

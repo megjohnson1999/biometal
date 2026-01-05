@@ -3,7 +3,6 @@
 //! Commands for quality-based trimming, masking, and region extraction.
 //! Essential for daily preprocessing workflows in genomics.
 
-use std::env;
 use std::process;
 
 /// Trim low-quality bases from sequences
@@ -105,27 +104,35 @@ pub fn trim_quality(args: &[String]) {
     // Import biometal types and operations
     use biometal::FastqStream;
     use biometal::operations::{trim_quality_start, trim_quality_end, trim_quality_both, trim_quality_window};
-    use std::io::{self, Write};
-    use std::fs::File;
-
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
+    use biometal::io::FastqWriter;
+    
+    use std::path::PathBuf;
 
     match input_file {
         Some(file_path) => {
             // FASTQ only (quality trimming requires quality scores)
-            match FastqStream::from_path(file_path) {
+            let mut writer = match output_file {
+                Some(path) => {
+                    match FastqWriter::create(&PathBuf::from(path)) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating output file '{}': {}", path, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                None => {
+                    match FastqWriter::stdout() {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating stdout writer: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            };
+
+            match FastqStream::from_path_streaming(file_path) {
                 Ok(stream) => {
                     for record_result in stream {
                         match record_result {
@@ -140,21 +147,8 @@ pub fn trim_quality(args: &[String]) {
 
                                 match trimmed_result {
                                     Ok(trimmed_record) => {
-                                        // Write FASTQ format
-                                        if writeln!(output, "@{}", trimmed_record.id).is_err() {
-                                            eprintln!("Error writing to output");
-                                            process::exit(1);
-                                        }
-                                        if writeln!(output, "{}", String::from_utf8_lossy(&trimmed_record.sequence)).is_err() {
-                                            eprintln!("Error writing to output");
-                                            process::exit(1);
-                                        }
-                                        if writeln!(output, "+").is_err() {
-                                            eprintln!("Error writing to output");
-                                            process::exit(1);
-                                        }
-                                        if writeln!(output, "{}", String::from_utf8_lossy(&trimmed_record.quality)).is_err() {
-                                            eprintln!("Error writing to output");
+                                        if let Err(e) = writer.write_record(&trimmed_record) {
+                                            eprintln!("Error writing FASTQ record: {}", e);
                                             process::exit(1);
                                         }
                                     }
@@ -250,48 +244,43 @@ pub fn mask_low_quality(args: &[String]) {
     // Import biometal types and operations
     use biometal::FastqStream;
     use biometal::operations::mask_low_quality_copy;
-    use std::io::{self, Write};
-    use std::fs::File;
-
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
+    use biometal::io::FastqWriter;
+    
+    use std::path::PathBuf;
 
     match input_file {
         Some(file_path) => {
             // FASTQ only (masking requires quality scores)
-            match FastqStream::from_path(file_path) {
+            let mut writer = match output_file {
+                Some(path) => {
+                    match FastqWriter::create(&PathBuf::from(path)) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating output file '{}': {}", path, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                None => {
+                    match FastqWriter::stdout() {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating stdout writer: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            };
+
+            match FastqStream::from_path_streaming(file_path) {
                 Ok(stream) => {
                     for record_result in stream {
                         match record_result {
                             Ok(record) => {
                                 match mask_low_quality_copy(&record, threshold) {
                                     Ok(masked_record) => {
-                                        // Write FASTQ format
-                                        if writeln!(output, "@{}", masked_record.id).is_err() {
-                                            eprintln!("Error writing to output");
-                                            process::exit(1);
-                                        }
-                                        if writeln!(output, "{}", String::from_utf8_lossy(&masked_record.sequence)).is_err() {
-                                            eprintln!("Error writing to output");
-                                            process::exit(1);
-                                        }
-                                        if writeln!(output, "+").is_err() {
-                                            eprintln!("Error writing to output");
-                                            process::exit(1);
-                                        }
-                                        if writeln!(output, "{}", String::from_utf8_lossy(&masked_record.quality)).is_err() {
-                                            eprintln!("Error writing to output");
+                                        if let Err(e) = writer.write_record(&masked_record) {
+                                            eprintln!("Error writing FASTQ record: {}", e);
                                             process::exit(1);
                                         }
                                     }
@@ -422,10 +411,11 @@ pub fn extract_region(args: &[String]) {
     }
 
     // Import biometal types and operations
-    use biometal::{FastqStream, FastaStream, FastqRecord, FastaRecord};
+    use biometal::{FastqStream, FastaStream, FastaRecord};
     use biometal::operations::extract_region;
-    use std::io::{self, Write};
-    use std::fs::File;
+    use biometal::io::{FastqWriter, fasta::FastaWriter};
+    
+    use std::path::PathBuf;
 
     let start = start_pos.unwrap();
     let end = end_pos.unwrap();
@@ -434,26 +424,33 @@ pub fn extract_region(args: &[String]) {
     let start_idx = start - 1;
     let end_idx = end - 1;
 
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
-
     match input_file {
         Some(file_path) => {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format - manual extraction
-                match FastaStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastaWriter::create(&PathBuf::from(path)) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastaWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -470,13 +467,8 @@ pub fn extract_region(args: &[String]) {
                                         sequence: extracted_seq.to_vec(),
                                     };
 
-                                    // Write FASTA format
-                                    if writeln!(output, ">{}", extracted_record.id).is_err() {
-                                        eprintln!("Error writing to output");
-                                        process::exit(1);
-                                    }
-                                    if writeln!(output, "{}", String::from_utf8_lossy(&extracted_record.sequence)).is_err() {
-                                        eprintln!("Error writing to output");
+                                    if let Err(e) = writer.write_record(&extracted_record) {
+                                        eprintln!("Error writing FASTA record: {}", e);
                                         process::exit(1);
                                     }
                                 }
@@ -494,28 +486,36 @@ pub fn extract_region(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default) - use biometal operation
-                match FastqStream::from_path(file_path) {
+                let mut writer = match output_file {
+                    Some(path) => {
+                        match FastqWriter::create(&PathBuf::from(path)) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating output file '{}': {}", path, e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                    None => {
+                        match FastqWriter::stdout() {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("Error creating stdout writer: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    }
+                };
+
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
                                 Ok(record) => {
                                     match extract_region(&record, start_idx, end_idx + 1) {
                                         Ok(extracted_record) => {
-                                            // Write FASTQ format
-                                            if writeln!(output, "@{}", extracted_record.id).is_err() {
-                                                eprintln!("Error writing to output");
-                                                process::exit(1);
-                                            }
-                                            if writeln!(output, "{}", String::from_utf8_lossy(&extracted_record.sequence)).is_err() {
-                                                eprintln!("Error writing to output");
-                                                process::exit(1);
-                                            }
-                                            if writeln!(output, "+").is_err() {
-                                                eprintln!("Error writing to output");
-                                                process::exit(1);
-                                            }
-                                            if writeln!(output, "{}", String::from_utf8_lossy(&extracted_record.quality)).is_err() {
-                                                eprintln!("Error writing to output");
+                                            if let Err(e) = writer.write_record(&extracted_record) {
+                                                eprintln!("Error writing FASTQ record: {}", e);
                                                 process::exit(1);
                                             }
                                         }

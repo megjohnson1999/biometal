@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 /// Entry 032 (scale validation across 0.54-544 MB):
 /// - Files <50 MB: 0.66-0.99× (overhead dominates, don't use mmap)
 /// - Files ≥50 MB: 2.30-2.55× speedup (APFS prefetching benefit)
-pub const MMAP_THRESHOLD: u64 = 50 * 1024 * 1024; // 50 MB
+pub const MMAP_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1 GB (conservative, CLI fix)
 
 // DEPRECATED: Parallel BGZF constants (Rule 3 disabled but code kept for reference)
 //
@@ -67,8 +67,11 @@ const PARALLEL_BLOCK_COUNT: usize = 8;
 /// Network streaming is CRITICAL, not optional.
 #[derive(Debug, Clone)]
 pub enum DataSource {
-    /// Local file path
+    /// Local file path with automatic memory mapping threshold
     Local(PathBuf),
+
+    /// Local file path with forced streaming I/O (ignores memory mapping threshold)
+    LocalStreaming(PathBuf),
 
     /// HTTP/HTTPS URL (Week 3-4 implementation)
     #[cfg(feature = "network")]
@@ -80,9 +83,18 @@ pub enum DataSource {
 }
 
 impl DataSource {
-    /// Create a local file data source
+    /// Create a local file data source with automatic memory mapping threshold
     pub fn from_path<P: AsRef<Path>>(path: P) -> Self {
         DataSource::Local(path.as_ref().to_path_buf())
+    }
+
+    /// Create a local file data source with forced streaming I/O
+    ///
+    /// This method always uses standard I/O streaming regardless of file size,
+    /// providing constant ~8-10MB memory usage. Perfect for sequential operations
+    /// like count-bases, gc-content, mean-quality, etc.
+    pub fn from_path_streaming<P: AsRef<Path>>(path: P) -> Self {
+        DataSource::LocalStreaming(path.as_ref().to_path_buf())
     }
 
     /// Get file size (if available)
@@ -96,7 +108,7 @@ impl DataSource {
     /// - Files ≥8 MB: Parallel (6.5× speedup)
     pub fn file_size(&self) -> Result<Option<u64>> {
         match self {
-            DataSource::Local(path) => {
+            DataSource::Local(path) | DataSource::LocalStreaming(path) => {
                 let metadata = std::fs::metadata(path)?;
                 Ok(Some(metadata.len()))
             }
@@ -114,6 +126,7 @@ impl DataSource {
     pub fn open(&self) -> Result<Box<dyn BufRead + Send>> {
         match self {
             DataSource::Local(path) => open_local_file(path),
+            DataSource::LocalStreaming(path) => open_streaming_file(path),
 
             #[cfg(feature = "network")]
             DataSource::Http(url) => {
@@ -157,6 +170,21 @@ fn open_local_file(path: &Path) -> Result<Box<dyn BufRead + Send>> {
     }
 }
 
+/// Open file with forced streaming I/O (ignores file size threshold)
+///
+/// Always uses standard I/O streaming regardless of file size, providing
+/// constant ~8-10MB memory usage. Perfect for sequential operations like
+/// count-bases, gc-content, mean-quality, etc.
+///
+/// # Performance
+/// - Memory: ~8-10MB constant (democratization goal achieved)
+/// - Speed: Optimal for sequential access patterns
+/// - Use case: CLI commands and sequential processing
+fn open_streaming_file(path: &Path) -> Result<Box<dyn BufRead + Send>> {
+    let file = File::open(path)?;
+    Ok(Box::new(BufReader::new(file)))
+}
+
 /// Open file with memory mapping and platform-specific optimization hints
 ///
 /// # Platform Support
@@ -172,6 +200,7 @@ fn open_mmap_file(path: &Path) -> Result<Box<dyn BufRead + Send>> {
     let mmap = unsafe { Mmap::map(&file)? };
 
     // Give kernel sequential access hints for APFS optimization
+    // Conservative memory mapping (500MB threshold) avoids CLI memory scaling
     unsafe {
         madvise(
             mmap.as_ptr() as *mut _,

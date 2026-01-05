@@ -2,7 +2,6 @@
 //!
 //! Commands for converting between sequence formats and basic I/O operations.
 
-use std::env;
 use std::process;
 
 /// Convert FASTQ to FASTA format
@@ -60,40 +59,42 @@ pub fn fastq_to_fasta(args: &[String]) {
     // Import biometal types and operations
     use biometal::FastqStream;
     use biometal::operations::to_fasta_record;
-    use std::io::{self, Write};
-    use std::fs::File;
-
-    // Determine output writer
-    let mut output: Box<dyn Write> = match output_file {
-        Some(path) => {
-            match File::create(path) {
-                Ok(file) => Box::new(file),
-                Err(e) => {
-                    eprintln!("Error creating output file '{}': {}", path, e);
-                    process::exit(1);
-                }
-            }
-        }
-        None => Box::new(io::stdout()),
-    };
+    use biometal::io::fasta::FastaWriter;
 
     match input_file {
         Some(file_path) => {
             // FASTQ only (converting from FASTQ to FASTA)
-            match FastqStream::from_path(file_path) {
+            let mut writer = match output_file {
+                Some(path) => {
+                    match FastaWriter::create(path) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating output file '{}': {}", path, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                None => {
+                    match FastaWriter::stdout() {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating stdout writer: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            };
+
+            match FastqStream::from_path_streaming(file_path) {
                 Ok(stream) => {
                     for record_result in stream {
                         match record_result {
                             Ok(fastq_record) => {
                                 let fasta_record = to_fasta_record(&fastq_record);
 
-                                // Write FASTA format
-                                if writeln!(output, ">{}", fasta_record.id).is_err() {
-                                    eprintln!("Error writing to output");
-                                    process::exit(1);
-                                }
-                                if writeln!(output, "{}", String::from_utf8_lossy(&fasta_record.sequence)).is_err() {
-                                    eprintln!("Error writing to output");
+                                // Use library writer
+                                if let Err(e) = writer.write_record(&fasta_record) {
+                                    eprintln!("Error writing FASTA record: {}", e);
                                     process::exit(1);
                                 }
                             }
@@ -112,24 +113,41 @@ pub fn fastq_to_fasta(args: &[String]) {
         }
         None => {
             // Read from stdin (FASTQ format)
-            use std::io::{self, BufRead, BufReader};
+            use std::io::{self, BufReader};
 
             let stdin = io::stdin();
             let reader = BufReader::new(stdin.lock());
             let stream = FastqStream::from_reader(reader);
+
+            let mut writer = match output_file {
+                Some(path) => {
+                    match FastaWriter::create(path) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating output file '{}': {}", path, e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                None => {
+                    match FastaWriter::stdout() {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("Error creating stdout writer: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+            };
 
             for record_result in stream {
                 match record_result {
                     Ok(fastq_record) => {
                         let fasta_record = to_fasta_record(&fastq_record);
 
-                        // Write FASTA format
-                        if writeln!(output, ">{}", fasta_record.id).is_err() {
-                            eprintln!("Error writing to output");
-                            process::exit(1);
-                        }
-                        if writeln!(output, "{}", String::from_utf8_lossy(&fasta_record.sequence)).is_err() {
-                            eprintln!("Error writing to output");
+                        // Use library writer
+                        if let Err(e) = writer.write_record(&fasta_record) {
+                            eprintln!("Error writing FASTA record: {}", e);
                             process::exit(1);
                         }
                     }
@@ -219,7 +237,7 @@ pub fn count_reads(args: &[String]) {
 
             match detected_format {
                 "fasta" => {
-                    match FastaStream::from_path(file_path) {
+                    match FastaStream::from_path_streaming(file_path) {
                         Ok(stream) => {
                             for record_result in stream {
                                 match record_result {
@@ -238,7 +256,7 @@ pub fn count_reads(args: &[String]) {
                     }
                 }
                 "fastq" => {
-                    match FastqStream::from_path(file_path) {
+                    match FastqStream::from_path_streaming(file_path) {
                         Ok(stream) => {
                             for record_result in stream {
                                 match record_result {
@@ -264,7 +282,7 @@ pub fn count_reads(args: &[String]) {
         }
         None => {
             // Read from stdin (defaults to FASTQ format)
-            use std::io::{self, BufRead, BufReader};
+            use std::io::{self, BufReader};
 
             let stdin = io::stdin();
             let reader = BufReader::new(stdin.lock());

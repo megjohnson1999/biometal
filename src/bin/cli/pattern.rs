@@ -3,7 +3,6 @@
 //! These commands utilize the SIMD pattern matching primitives extracted from bio-virome-tools
 //! FastQC NEON implementation. They provide 8-15× speedup on ARM64 platforms.
 
-use std::env;
 use std::process;
 
 /// Find pattern occurrences in sequences
@@ -123,7 +122,7 @@ pub fn find_pattern(args: &[String]) {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format
-                match FastaStream::from_path(file_path) {
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -182,7 +181,7 @@ pub fn find_pattern(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default)
-                match FastqStream::from_path(file_path) {
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -321,7 +320,7 @@ pub fn count_pattern(args: &[String]) {
             // Detect format from extension
             if file_path.ends_with(".fa") || file_path.ends_with(".fasta") || file_path.ends_with(".fas") {
                 // FASTA format
-                match FastaStream::from_path(file_path) {
+                match FastaStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -347,7 +346,7 @@ pub fn count_pattern(args: &[String]) {
                 }
             } else {
                 // FASTQ format (default)
-                match FastqStream::from_path(file_path) {
+                match FastqStream::from_path_streaming(file_path) {
                     Ok(stream) => {
                         for record_result in stream {
                             match record_result {
@@ -540,7 +539,7 @@ pub fn find_adapters(args: &[String]) {
     match input_file {
         Some(file_path) => {
             // FASTQ only (adapter detection is typically for reads with quality scores)
-            match FastqStream::from_path(file_path) {
+            match FastqStream::from_path_streaming(file_path) {
                 Ok(stream) => {
                     for record_result in stream {
                         match record_result {
