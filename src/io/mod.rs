@@ -9,7 +9,7 @@ mod fastq;
 mod paired;
 pub mod sink;
 
-pub use compression::{decompress_bgzip_parallel, CompressedReader, CompressedWriter, DataSource, MMAP_THRESHOLD};
+pub use compression::{decompress_bgzip_parallel, CompressedReader, CompressedWriter, DataSource, STREAMING_THRESHOLD};
 pub use fasta::{FaiIndex, FastaStream, FastaWriter};
 pub use fastq::{FastqStream, FastqWriter};
 pub use paired::PairedFastqStream;

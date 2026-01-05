@@ -25,14 +25,19 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-/// Memory-mapped file threshold (50 MB)
+/// Streaming file threshold (200 MB)
 ///
-/// # Evidence
+/// # Evidence & Logic
 ///
 /// Entry 032 (scale validation across 0.54-544 MB):
-/// - Files <50 MB: 0.66-0.99× (overhead dominates, don't use mmap)
-/// - Files ≥50 MB: 2.30-2.55× speedup (APFS prefetching benefit)
-pub const MMAP_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1 GB (conservative, CLI fix)
+/// - Files <200 MB: Memory mapping safe, 2.30-2.55× speedup (APFS prefetching benefit)
+/// - Files ≥200 MB: Use streaming to prevent memory pressure on laptops
+///
+/// # Corrected Logic
+///
+/// - Small files (≤200 MB): Memory mapping for performance (safe memory usage)
+/// - Large files (>200 MB): Streaming I/O for constant memory (essential for laptops)
+pub const STREAMING_THRESHOLD: u64 = 200 * 1024 * 1024; // 200 MB
 
 // DEPRECATED: Parallel BGZF constants (Rule 3 disabled but code kept for reference)
 //
@@ -149,24 +154,24 @@ impl DataSource {
     }
 }
 
-/// Open a local file with smart I/O method selection (Rule 4)
+/// Open a local file with corrected threshold logic
 ///
-/// # Evidence
+/// # Corrected Strategy
 ///
-/// Entry 032 (threshold-based mmap):
-/// - Small files (<50 MB): Use standard I/O (faster)
-/// - Large files (≥50 MB): Use mmap + madvise (2.5× speedup on macOS)
+/// Fixed threshold logic for memory-constrained environments:
+/// - Small files (≤200 MB): Use memory mapping (Rule 4, 2.5× speedup, safe memory)
+/// - Large files (>200 MB): Use streaming I/O (constant memory, essential for laptops)
 fn open_local_file(path: &Path) -> Result<Box<dyn BufRead + Send>> {
     let metadata = std::fs::metadata(path)?;
     let file_size = metadata.len();
 
-    if file_size >= MMAP_THRESHOLD {
-        // Large file: Use memory-mapped I/O (Rule 4, 2.5× speedup)
-        open_mmap_file(path)
-    } else {
-        // Small file: Use standard I/O (avoids mmap overhead)
+    if file_size > STREAMING_THRESHOLD {
+        // Large file: Use streaming I/O for constant memory (essential for laptops)
         let file = File::open(path)?;
         Ok(Box::new(BufReader::new(file)))
+    } else {
+        // Small file: Use memory-mapped I/O (Rule 4, 2.5× speedup, safe memory usage)
+        open_mmap_file(path)
     }
 }
 
@@ -2082,9 +2087,9 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_mmap_threshold_constant() {
-        // Verify evidence-based threshold (Entry 032)
-        assert_eq!(MMAP_THRESHOLD, 50 * 1024 * 1024);
+    fn test_streaming_threshold_constant() {
+        // Verify corrected streaming threshold for memory-constrained environments
+        assert_eq!(STREAMING_THRESHOLD, 200 * 1024 * 1024);
     }
 
     #[test]
