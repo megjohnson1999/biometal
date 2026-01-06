@@ -79,7 +79,6 @@
 
 use crate::error::{BiometalError, Result};
 use crate::io::compression::{CompressedReader, DataSource};
-use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 

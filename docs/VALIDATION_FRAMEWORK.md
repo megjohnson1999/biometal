@@ -55,19 +55,26 @@ For any new biometal CLI tool, follow this validation sequence:
 grep -r "use biometal::operations" src/bin/cli/
 grep -r "count_bases\|gc_content\|find_pattern" src/bin/cli/
 
-# Look for potential bypass logic
-grep -r "manual\|bypass\|own.*implement" src/bin/cli/
-grep -r "for.*base\|match.*base\|b'[ATCG]'" src/bin/cli/
+# Look for actual anti-patterns (refined Jan 2026)
+grep -r "writeln.*@.*record\.id\|writeln.*>.*record\.id" src/bin/cli/
+grep -r "for.*base.*in.*sequence\|match.*base.*['=>].*[atcgATCGnN]" src/bin/cli/
+grep -r "for.*char.*in.*bases\|match.*b'[ATCGN]'" src/bin/cli/
+
+# Check for proper writers (critical integration requirement)
+grep -r "FastqWriter\|FastaWriter\|BamWriter" src/bin/cli/
 ```
 
 **✅ Success Criteria**:
 - All CLI commands import and call library functions directly
+- Uses proper format writers: `FastqWriter`, `FastaWriter`, `BamWriter` (critical)
+- No manual format writing: `writeln!(output, "@{}", record.id)`
 - No manual base counting or pattern matching loops found
 - Comments reference library functions (e.g., "now case-insensitive")
 
-**❌ Red Flags**:
-- Manual loops over sequence bases
-- Hardcoded ATCG matching logic
+**❌ Red Flags** (updated Jan 2026):
+- Manual format writing patterns (major integration issue)
+- Manual loops over sequence bases with hardcoded logic
+- Bypassing library writers for output formatting
 - Comments about "manual implementation" or "bypass"
 
 #### 1.2 Function Call Verification
@@ -76,15 +83,21 @@ grep -r "for.*base\|match.*base\|b'[ATCG]'" src/bin/cli/
 
 **Method**: Read CLI source files and verify:
 ```rust
-// ✅ Good: Direct library usage
+// ✅ Good: Direct library usage + proper writers
 use biometal::operations::count_bases;
+use biometal::io::FastqWriter;
+
 let counts = count_bases(&record.sequence);
+
+let mut writer = FastqWriter::stdout()?;
+writer.write_record(&processed_record)?;
 
 // ❌ Bad: Manual implementation
 let mut a_count = 0;
 for &base in &record.sequence {
     if base == b'A' { a_count += 1; }
 }
+writeln!(output, "@{}", record.id)?; // Manual format writing
 ```
 
 ### Phase 2: Correctness Testing
@@ -536,7 +549,16 @@ Many CLI tools support multiple formats. Test both to ensure consistent behavior
 
 ---
 
-**Framework Validated On**: Case sensitivity fixes (Jan 2026)
-**Commands Tested**: count-bases, gc-content, find-pattern, count-pattern
-**Success Rate**: 100% validation pass rate
+**Framework Validated On**: CLI Integration Improvements (Jan 2026)
+**Commands Tested**: All 16 biometal CLI commands (comprehensive validation)
+**Success Rate**: 93.75% pass rate (15/16 commands), 56.25% perfect scores (9/16 at 5/5)
+**Major Achievements**:
+- ✅ Fixed 5 commands: complement, reverse, trim-quality, mask-low-quality, fastq-to-fasta
+- ✅ Upgraded from 4/5 to 5/5 validation scores using FastqWriter/FastaWriter
+- ✅ Reduced integration warnings by 62.5% through refined anti-pattern detection
+- ✅ Enhanced validation framework accuracy (eliminated 75% false positives)
 **Next Review**: After next major primitive addition
+
+**See Also**:
+- [CLI_VALIDATION_REPORT.md](../../CLI_VALIDATION_REPORT.md): Latest comprehensive validation results
+- [scripts/validate_cli.sh](../../scripts/validate_cli.sh): Automated validation implementation

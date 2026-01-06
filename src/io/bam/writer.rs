@@ -344,7 +344,7 @@ fn encode_sequence(seq: &[u8]) -> Vec<u8> {
         let byte = if chunk.len() == 2 {
             (base_to_4bit(chunk[0]) << 4) | base_to_4bit(chunk[1])
         } else {
-            (base_to_4bit(chunk[0]) << 4) // Last byte, pad with 0
+            base_to_4bit(chunk[0]) << 4 // Last byte, pad with 0
         };
         encoded.push(byte);
     }

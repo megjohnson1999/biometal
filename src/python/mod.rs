@@ -26,6 +26,7 @@ mod fasta;
 mod tbi;
 mod csi;
 mod genbank;
+mod alignment;
 
 pub use records::*;
 pub use streams::*;
@@ -48,6 +49,7 @@ pub use fasta::*;
 pub use tbi::*;
 pub use csi::*;
 pub use genbank::*;
+pub use alignment::*;
 
 /// biometal: ARM-native bioinformatics library
 ///
@@ -204,6 +206,22 @@ fn biometal(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(edit_distance_stats, m)?)?;
     m.add_function(wrap_pyfunction!(strand_bias, m)?)?;
     m.add_function(wrap_pyfunction!(alignment_length_distribution, m)?)?;
+
+    // Register alignment classes and functions
+    m.add_class::<PyScoringMatrix>()?;
+    m.add_class::<PyAlignment>()?;
+    m.add_class::<PyStreamingMapperConfig>()?;
+    m.add_class::<PyMappingResult>()?;
+    m.add_class::<PyStreamingMapper>()?;
+    m.add_class::<PyMotifPattern>()?;
+    m.add_class::<PyMotifMatch>()?;
+    m.add_class::<PyMotifFinder>()?;
+    m.add_class::<PyPrimerFinder>()?;
+    m.add_class::<PyAdapterDetector>()?;
+
+    // Register alignment functions
+    m.add_function(wrap_pyfunction!(py_smith_waterman, m)?)?;
+    m.add_function(wrap_pyfunction!(py_smith_waterman_naive, m)?)?;
 
     // Module metadata
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

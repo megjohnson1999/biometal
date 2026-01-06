@@ -252,38 +252,59 @@ Resolved CLI memory scaling issue discovered during memory efficiency testing. *
 ---
 
 
-## Next Steps: Post-Phase 2
+## Next Steps: Alignment Primitive Development
 
 **Phase 2 Status**: ✅ COMPLETE (v1.11.0, November 16, 2025)
+**Current Branch**: feature/alignment-primitive (January 6, 2026)
 
-### Option 1: Code Quality & Polish (1-2 weeks, **RECOMMENDED**)
-**Why**: Makes biometal production-ready for community adoption
+### ✅ **Streaming Architecture: VALIDATED (Jan 6, 2026)**
+
+Completed comprehensive validation of streaming alignment mapper. **Key findings**:
+- **Memory efficiency**: 8-9MB constant memory achieved ✅
+- **Performance**: 2,700+ reads/sec (competitive with production aligners) ✅
+- **Streaming architecture**: Handles real data without memory accumulation ✅
+- **Quality control**: High false positive rate - needs filtering improvements ⚠️
+
+**Status**: Proof-of-concept with working streaming architecture, requires quality control for production use.
+
+**See**: [ALIGNMENT_VALIDATION_REPORT.md](ALIGNMENT_VALIDATION_REPORT.md) for full validation results.
+
+### 🎯 **Phase 3: Alignment Quality Control (1-2 weeks, **IMMEDIATE PRIORITY**)**
+
+**Why**: Transform proof-of-concept into production-ready alignment primitive
+- **Quality Filtering**: Statistical scoring, multi-mapping penalties, significance testing
+- **Alignment Strategy**: Seed-and-extend vs exhaustive Smith-Waterman
+- **Ground Truth Validation**: Controlled testing with known datasets
+- **Host Depletion Testing**: Real-world workflow validation
+
+**Next Session Priority**:
+1. Implement length-normalized scoring with E-value calculations
+2. Add multi-mapping filtering and best-hit selection
+3. Create synthetic ground truth validation datasets
+4. Compare sensitivity/specificity vs minimap2 on controlled data
+
+### Alternative Options (Post-Quality Control):
+
+#### Option A: Performance Optimization (1-2 weeks)
+- Complete NEON Smith-Waterman implementation (2-4× speedup)
+- GPU batch processing optimization (10-50× potential speedup)
+- Anti-diagonal parallelization
+
+#### Option B: Code Quality & Polish (1-2 weeks)
 - Comprehensive benchmarking (N=30 validation for all formats)
 - Cross-platform testing (AWS Graviton ARM, Linux x86_64)
 - Documentation improvements (user guides, tutorials, API docs)
-- Performance profiling and optimization opportunities
-- Blog post/paper draft showcasing Phase 2 achievements
 
-### Option 2: Advanced Format Support (2-4 weeks)
-**Why**: Comprehensive format coverage
-- **BCF** (Binary VCF) - 30-40 hours, high community value
-- **CRAM writing** (complex, 40-60 hours, lower priority)
-- Additional indices (CSI completion, other formats)
-**Risk**: Diminishing returns, most common formats done
-
-### Option 3: GPU/ML Research (3-6 months, **HIGH NOVELTY**)
-**Why**: High research impact, unique to Apple Silicon
+#### Option C: GPU/ML Research (3-6 months)
 - **Smith-Waterman GPU acceleration** (10-50× potential speedup)
 - **Streaming BERT data loaders** (constant memory for genomic ML)
 - **Quality-aware tokenization** (NOVEL - publishable research)
-- **Neural Engine integration** (Apple Silicon exclusive)
-**See**: PROJECT_TODOS.md for detailed 24-week roadmap
 
 ### Recommendation
-**Phase 3**: Option 1 (Polish, 1-2 weeks) → Option 3 (GPU/ML, 3-6 months) → v2.0 release
-**Rationale**: Polish ensures quality foundation, GPU/ML has highest research impact
+**Phase 3A**: Quality Control (1-2 weeks) → **Phase 3B**: Performance Optimization → **Phase 4**: Production release
+**Rationale**: Streaming architecture proven sound, quality control is the blocker for production readiness
 
-**Decision Point**: Which option to pursue next session?
+**Current Status**: Ready to implement quality filtering - the hard architectural work is done!
 
 ---
 

@@ -58,7 +58,7 @@ use crate::formats::primitives::{
     fields::{parse_required, split_fields},
     Result, TabDelimitedRecord,
 };
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 
 /// PAF alignment record.
 ///

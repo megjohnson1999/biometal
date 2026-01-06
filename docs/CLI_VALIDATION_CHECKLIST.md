@@ -17,6 +17,12 @@ grep -r "[primitive_function](" src/bin/cli/[command].rs
 
 # ✅ Should see direct library imports and function calls
 # ❌ Red flag: manual loops, hardcoded ATCG logic
+
+# CRITICAL: Check for proper writers (learned from integration fixes)
+grep -r "FastqWriter\|FastaWriter\|BamWriter" src/bin/cli/[command].rs
+
+# ✅ Should use library writers for output
+# ❌ Red flag: writeln!(output, "@{}", record.id) - manual format writing
 ```
 
 ### 2. Basic Test (1 minute)
@@ -79,6 +85,16 @@ expected_total = len([b for b in seq if b.upper() in 'ATCG'])
 
 ## 🚨 Common Issues Quick Fix
 
+### Issue: Integration Warnings (4/5 score instead of 5/5)
+```bash
+# Check for manual implementation anti-patterns
+grep -E "writeln.*@.*record\.id|writeln.*>.*record\.id" src/bin/cli/[command].rs
+grep -E "for.*base.*in.*sequence|match.*base.*['=>].*[atcgATCG]" src/bin/cli/[command].rs
+
+# ✅ Fix: Replace with FastqWriter/FastaWriter
+# ✅ Fix: Use library primitive functions
+```
+
 ### Issue: Wrong Results
 ```bash
 # Check CLI source
@@ -110,6 +126,8 @@ cargo clean && cargo build --release
 ### Integration ⚙️
 - [ ] Uses `biometal::operations::[FUNCTION]`
 - [ ] Direct function calls: `[FUNCTION](&record.sequence)`
+- [ ] Uses proper writers: `FastqWriter`, `FastaWriter`, etc.
+- [ ] No manual format writing: `writeln!(output, "@{}", record.id)`
 - [ ] No manual implementations found
 
 ### Correctness ✅
@@ -200,6 +218,24 @@ echo -e "@test\nATCGatcg\n+\nIIIIIIII" | cargo run --bin biometal --release -- "
 
 echo "🎉 Quick validation complete!"
 ```
+
+---
+
+## 🚀 Comprehensive Validation
+
+For thorough validation of all CLI commands:
+
+```bash
+# Use the comprehensive validation script (5/5 scoring system)
+./scripts/validate_cli.sh [command_name]
+
+# Example: ./scripts/validate_cli.sh count-bases
+# Provides detailed integration, correctness, and performance analysis
+```
+
+**See also**:
+- [CLI_VALIDATION_REPORT.md](../../CLI_VALIDATION_REPORT.md) - Latest validation results for all 16 commands
+- [VALIDATION_FRAMEWORK.md](VALIDATION_FRAMEWORK.md) - Detailed methodology
 
 ---
 

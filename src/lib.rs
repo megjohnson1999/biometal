@@ -63,7 +63,11 @@ pub mod ml;
 pub mod python;
 
 // Re-export commonly used types
-pub use alignment::{smith_waterman, Alignment, CigarOp, ScoringMatrix};
+pub use alignment::{
+    smith_waterman, Alignment, CigarOp, ScoringMatrix,
+    StreamingMapper, StreamingMapperConfig, MappingResult, StreamingMappingIterator,
+    MotifFinder, PrimerFinder, AdapterDetector, MotifPattern, MotifMatch,
+};
 pub use error::{BiometalError, Result};
 pub use io::{FastaStream, FastqStream, FastqWriter, PairedFastqStream};
 pub use types::{FastaRecord, FastqRecord};

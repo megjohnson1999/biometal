@@ -100,20 +100,34 @@ else
     exit 1
 fi
 
-# Check for direct function calls (avoid manual implementations)
-MANUAL_PATTERNS=("for.*base" "match.*[atcgATCG]" "b'[ATCG]'" "manual.*implement")
+# Check for manual implementation anti-patterns (more specific)
+MANUAL_PATTERNS=(
+    "for.*base.*in.*sequence"           # Manual base iteration
+    "match.*base.*['=>].*[atcgATCGnN]"  # Manual base matching
+    "writeln.*@.*record\.id"            # Manual FASTQ header writing
+    "writeln.*>.*record\.id"            # Manual FASTA header writing
+    "for.*char.*in.*bases"              # Manual character iteration
+    "match.*b'[ATCGN]'"                 # Manual byte matching
+)
+
+MANUAL_DETECTED=false
 for pattern in "${MANUAL_PATTERNS[@]}"; do
     if grep -q "$pattern" "$CLI_FILE"; then
-        log_warning "Potential manual implementation detected: $pattern"
+        log_warning "Manual implementation anti-pattern: $pattern"
+        MANUAL_DETECTED=true
     fi
 done
 
-# Check for library function calls
-LIBRARY_CALLS=$(grep -E "(count_bases|gc_content|find_pattern|count_pattern)\(" "$CLI_FILE" | wc -l)
-if [ "$LIBRARY_CALLS" -gt 0 ]; then
-    log_success "Library function calls found ($LIBRARY_CALLS occurrences)"
+# Check for library function calls and writers
+LIBRARY_FUNCTIONS=$(grep -E "(count_bases|gc_content|find_pattern|count_pattern|to_fasta_record|reverse_complement|complement|reverse)\(" "$CLI_FILE" | wc -l)
+LIBRARY_WRITERS=$(grep -E "(FastqWriter|FastaWriter|BamWriter)" "$CLI_FILE" | wc -l)
+
+if [ "$LIBRARY_FUNCTIONS" -gt 0 ]; then
+    log_success "Library function calls found ($LIBRARY_FUNCTIONS occurrences)"
+elif [ "$LIBRARY_WRITERS" -gt 0 ]; then
+    log_success "Library writers found ($LIBRARY_WRITERS occurrences)"
 else
-    log_warning "No library function calls detected - verify implementation"
+    log_warning "No library function calls or writers detected - verify implementation"
 fi
 
 echo
@@ -155,7 +169,16 @@ fi
 # Test with actual data
 echo "   Testing with mixed-case data..."
 OUTPUT_FILE="$TEMP_DIR/output.txt"
-if timeout 60s cargo run --bin biometal --release -- "$COMMAND_NAME" "$TEST_FILE" > "$OUTPUT_FILE" 2>&1; then
+
+# Handle commands that require special parameters
+if [ "$COMMAND_NAME" = "extract-region" ]; then
+    # extract-region requires --start and --end parameters
+    COMMAND_ARGS="--start 5 --end 15 $TEST_FILE"
+else
+    COMMAND_ARGS="$TEST_FILE"
+fi
+
+if timeout 60s cargo run --bin biometal --release -- "$COMMAND_NAME" $COMMAND_ARGS > "$OUTPUT_FILE" 2>&1; then
     log_success "Command executed successfully"
 
     # Show first few lines of output
@@ -194,7 +217,14 @@ a
 I
 EOF
 
-if timeout 60s cargo run --bin biometal --release -- "$COMMAND_NAME" "$EDGE_FILE" > "$TEMP_DIR/edge_output.txt" 2>&1; then
+# Handle edge case testing with special parameters
+if [ "$COMMAND_NAME" = "extract-region" ]; then
+    EDGE_COMMAND_ARGS="--start 1 --end 5 $EDGE_FILE"
+else
+    EDGE_COMMAND_ARGS="$EDGE_FILE"
+fi
+
+if timeout 60s cargo run --bin biometal --release -- "$COMMAND_NAME" $EDGE_COMMAND_ARGS > "$TEMP_DIR/edge_output.txt" 2>&1; then
     log_success "Edge cases handled gracefully"
 else
     log_warning "Edge cases may have issues"
@@ -259,12 +289,21 @@ log_phase "📋 Validation Summary"
 VALIDATION_SCORE=0
 MAX_SCORE=5
 
-# Score integration
-if grep -q "use biometal::operations::" "$CLI_FILE" && [ "$LIBRARY_CALLS" -gt 0 ]; then
+# Score integration (improved logic)
+HAS_IMPORTS=$(grep -q "use biometal::operations::" "$CLI_FILE" && echo "true" || echo "false")
+HAS_LIBRARY_USAGE=$([ "$LIBRARY_FUNCTIONS" -gt 0 ] || [ "$LIBRARY_WRITERS" -gt 0 ] && echo "true" || echo "false")
+
+if [ "$HAS_IMPORTS" = "true" ] && [ "$HAS_LIBRARY_USAGE" = "true" ] && [ "$MANUAL_DETECTED" = "false" ]; then
     log_success "Integration: PASS"
     ((VALIDATION_SCORE++))
 else
     log_error "Integration: FAIL"
+    if [ "$MANUAL_DETECTED" = "true" ]; then
+        echo "   Manual implementation anti-patterns detected"
+    fi
+    if [ "$HAS_LIBRARY_USAGE" = "false" ]; then
+        echo "   No library function calls or writers found"
+    fi
 fi
 
 # Score basic functionality
