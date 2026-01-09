@@ -81,11 +81,14 @@ enum Direction {
     None,     // Start of alignment (score = 0)
 }
 
-/// DP matrix cell
+/// DP matrix cell with affine gap penalty tracking
 #[derive(Debug, Clone, Copy)]
 struct Cell {
     score: i32,
     direction: Direction,
+    match_score: i32,     // Score from match/mismatch state
+    insert_score: i32,    // Score from insertion state
+    delete_score: i32,    // Score from deletion state
 }
 
 /// Smith-Waterman local alignment (automatically selects best implementation)
@@ -196,37 +199,72 @@ pub fn smith_waterman_naive(
 
     // Initialize DP matrix (m+1 × n+1)
     // First row and column are all zeros (local alignment)
-    let mut matrix = vec![vec![Cell { score: 0, direction: Direction::None }; n + 1]; m + 1];
+    let mut matrix = vec![vec![Cell {
+        score: 0,
+        direction: Direction::None,
+        match_score: 0,
+        insert_score: i32::MIN / 2, // -infinity (avoid overflow)
+        delete_score: i32::MIN / 2, // -infinity (avoid overflow)
+    }; n + 1]; m + 1];
 
     // Track maximum score for traceback
     let mut max_score = 0;
     let mut max_i = 0;
     let mut max_j = 0;
 
-    // Fill DP matrix (forward pass)
+    // Fill DP matrix (forward pass) with affine gap penalties
     for i in 1..=m {
         for j in 1..=n {
             // Calculate score for match/mismatch
-            let match_score = scoring.score(query[i - 1], reference[j - 1]);
+            let match_base_score = scoring.score(query[i - 1], reference[j - 1]);
 
-            // Calculate scores from three directions
-            let diagonal = matrix[i - 1][j - 1].score + match_score;
-            let up = matrix[i - 1][j].score + scoring.gap_open;
-            let left = matrix[i][j - 1].score + scoring.gap_open;
+            // M[i,j] = best score ending in match/mismatch state
+            let match_score = [
+                matrix[i - 1][j - 1].match_score + match_base_score,
+                matrix[i - 1][j - 1].insert_score + match_base_score,
+                matrix[i - 1][j - 1].delete_score + match_base_score,
+            ].iter().max().copied().unwrap_or(0);
 
-            // Take maximum (including 0 for local alignment)
-            let (score, direction) = max4(
-                (diagonal, Direction::Diagonal),
-                (up, Direction::Up),
-                (left, Direction::Left),
-                (0, Direction::None),
-            );
+            // I[i,j] = best score ending in insertion state (gap in reference)
+            let insert_score = [
+                matrix[i - 1][j].match_score + scoring.gap_open,
+                matrix[i - 1][j].insert_score + scoring.gap_extend,
+                matrix[i - 1][j].delete_score + scoring.gap_open,
+            ].iter().max().copied().unwrap_or(i32::MIN / 2);
 
-            matrix[i][j] = Cell { score, direction };
+            // D[i,j] = best score ending in deletion state (gap in query)
+            let delete_score = [
+                matrix[i][j - 1].match_score + scoring.gap_open,
+                matrix[i][j - 1].insert_score + scoring.gap_open,
+                matrix[i][j - 1].delete_score + scoring.gap_extend,
+            ].iter().max().copied().unwrap_or(i32::MIN / 2);
 
-            // Track maximum score
-            if score > max_score {
-                max_score = score;
+            // H[i,j] = best overall score (local alignment: max with 0)
+            let scores = [match_score, insert_score, delete_score, 0];
+            let best_score = scores.iter().max().copied().unwrap_or(0);
+
+            // Determine direction for traceback
+            let direction = if best_score == 0 {
+                Direction::None
+            } else if best_score == match_score {
+                Direction::Diagonal
+            } else if best_score == insert_score {
+                Direction::Up
+            } else {
+                Direction::Left
+            };
+
+            matrix[i][j] = Cell {
+                score: best_score,
+                direction,
+                match_score,
+                insert_score,
+                delete_score,
+            };
+
+            // Track maximum score for traceback
+            if best_score > max_score {
+                max_score = best_score;
                 max_i = i;
                 max_j = j;
             }
@@ -588,7 +626,13 @@ fn traceback_neon_result(
     let local_m = i_end - i_start;
     let local_n = j_end - j_start;
 
-    let mut matrix = vec![vec![Cell { score: 0, direction: Direction::None }; local_n + 1]; local_m + 1];
+    let mut matrix = vec![vec![Cell {
+        score: 0,
+        direction: Direction::None,
+        match_score: 0,
+        insert_score: i32::MIN / 2,
+        delete_score: i32::MIN / 2,
+    }; local_n + 1]; local_m + 1];
 
     // Fill the local matrix around optimal region
     for i in 1..=local_m {
@@ -600,20 +644,50 @@ fn traceback_neon_result(
                 continue;
             }
 
-            let match_score = scoring.score(query[qi], reference[qj]);
+            let match_base_score = scoring.score(query[qi], reference[qj]);
 
-            let diagonal = matrix[i - 1][j - 1].score + match_score;
-            let up = matrix[i - 1][j].score + scoring.gap_open;
-            let left = matrix[i][j - 1].score + scoring.gap_open;
+            // M[i,j] = best score ending in match/mismatch state
+            let match_score = [
+                matrix[i - 1][j - 1].match_score + match_base_score,
+                matrix[i - 1][j - 1].insert_score + match_base_score,
+                matrix[i - 1][j - 1].delete_score + match_base_score,
+            ].iter().max().copied().unwrap_or(0);
 
-            let (score, direction) = max4(
-                (diagonal, Direction::Diagonal),
-                (up, Direction::Up),
-                (left, Direction::Left),
-                (0, Direction::None),
-            );
+            // I[i,j] = best score ending in insertion state
+            let insert_score = [
+                matrix[i - 1][j].match_score + scoring.gap_open,
+                matrix[i - 1][j].insert_score + scoring.gap_extend,
+                matrix[i - 1][j].delete_score + scoring.gap_open,
+            ].iter().max().copied().unwrap_or(i32::MIN / 2);
 
-            matrix[i][j] = Cell { score, direction };
+            // D[i,j] = best score ending in deletion state
+            let delete_score = [
+                matrix[i][j - 1].match_score + scoring.gap_open,
+                matrix[i][j - 1].insert_score + scoring.gap_open,
+                matrix[i][j - 1].delete_score + scoring.gap_extend,
+            ].iter().max().copied().unwrap_or(i32::MIN / 2);
+
+            // H[i,j] = best overall score
+            let scores = [match_score, insert_score, delete_score, 0];
+            let best_score = scores.iter().max().copied().unwrap_or(0);
+
+            let direction = if best_score == 0 {
+                Direction::None
+            } else if best_score == match_score {
+                Direction::Diagonal
+            } else if best_score == insert_score {
+                Direction::Up
+            } else {
+                Direction::Left
+            };
+
+            matrix[i][j] = Cell {
+                score: best_score,
+                direction,
+                match_score,
+                insert_score,
+                delete_score,
+            };
         }
     }
 
